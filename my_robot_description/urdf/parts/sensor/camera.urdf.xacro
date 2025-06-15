@@ -1,0 +1,45 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+    <xacro:include filename="$(find my_robot_description)/urdf/common/common_inertia.xacro"/>
+    <xacro:macro name="camera_xacro" params="xyz">     <!--名字不能重-->
+        <link name="camera_link">
+            <visual>
+                <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0"/>
+                <geometry>
+                    <box size="0.02 0.10 0.02"/>
+                </geometry>
+                <material name="black">
+                    <color rgba="0.0 0.0 0.0 0.5"/>
+                </material>
+            </visual>
+            <collision>
+                <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0"/>
+                <geometry>
+                    <box size="0.02 0.10 0.02"/>
+                </geometry>
+                <material name="black">
+                    <color rgba="0.0 0.0 0.0 0.5"/>
+                </material>
+            </collision>
+            <xacro:box_inertia m="0.1" w="0.02" h="0.10" d="0.02" />
+        </link>
+
+        <link name="camera_optical_link"></link>   <!--虚拟部件,用于修正深度相机默认看z轴的问题-->
+
+        <joint name="camera_joint" type="fixed">
+            <origin xyz="${xyz}" rpy="0.0 0.0 0.0"/>
+            <parent link="base_link"/>
+            <child link="camera_link"/>
+        </joint>
+
+        <joint name="camera_optical_joint" type="fixed">    <!--虚拟关节,配合使用-->
+            <origin xyz="0.0 0.0 0.0" rpy="-1.5707963 0.0 -1.5707963"/>
+            <parent link="camera_link"/>
+            <child link="camera_optical_link"/>
+        </joint>
+
+    </xacro:macro>
+
+
+
+</robot>

@@ -1,0 +1,45 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+    <xacro:macro name="robot_ros2_control">
+        <ros2_control name="RobotGazeboSystem" type="system">    <!--硬件接口-->
+            <hardware>    <!--与 Gazebo 仿真环境交互-->
+                <plugin>gazebo_ros2_control/GazeboSystem</plugin>
+            </hardware>
+            <joint name="left_wheel_joint">
+                <command_interface name="velocity">
+                    <param name="min">-1</param>
+                    <param name="max">1</param>
+                </command_interface>
+                <command_interface name="effort">
+                    <param name="min">-0.1</param>
+                    <param name="max">0.1</param>
+                </command_interface>
+                <state_interface name="position" />
+                <state_interface name="velocity" />
+                <state_interface name="effort" />
+            </joint>
+            <joint name="right_wheel_joint">
+                <command_interface name="velocity">
+                    <param name="min">-1</param>
+                    <param name="max">1</param>
+                </command_interface>
+                <command_interface name="effort">
+                    <param name="min">-0.1</param>
+                    <param name="max">0.1</param>
+                </command_interface>
+                <state_interface name="position" />
+                <state_interface name="velocity" />
+                <state_interface name="effort" />
+            </joint>
+        </ros2_control>
+        <gazebo>
+            <plugin filename="libgazebo_ros2_control.so" name="gazebo_ros2_control">   <!--本身不包含控制逻辑,只是特定的寻找ros2_control标签-->
+                <parameters>$(find my_robot_description)/config/robot_ros2_controller.yaml</parameters>    <!--定义具体控制器-->
+                <ros>
+                    <remapping>/robot_diff_driver_controller/cmd_vel_unstamped:=/cmd_vel</remapping>   <!--让键盘控制节点可以发布到这个话题-->
+                    <remapping>/robot_diff_driver_controller/odom:=/odom</remapping>   <!--让键盘控制节点可以发布到这个话题-->
+                </ros>
+            </plugin>
+        </gazebo>
+    </xacro:macro>
+</robot>
