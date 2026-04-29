@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+
+# colcon / ament 构建产物
+build/
+install/
+log/
+
+# 编辑器与系统
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# 巡逻机器人运行时生成的图片（默认目录已改到 ~/patrol_robot_pictures，
+# 但保留此规则以兼容旧版本和自定义目录）
+patrol_robot/picture/
