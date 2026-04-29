@@ -4,6 +4,9 @@
 
 本项目旨在提供一个完整、模块化且易于扩展的 ROS 2 应用范例，涵盖了仿真、导航、节点通信、参数配置、多节点集成启动等核心概念。
 
+> 想从 0 开始跑通这个项目? 推荐先阅读新手友好的操作手册: [`docs/MANUAL.md`](docs/MANUAL.md)。
+> 手册中包含完整环境配置、一键运行、常见坑、Gazebo/RViz 中机器人不动的逐步排查方法等内容。
+
 ## 1. 项目介绍
 
 本项目包含以下核心功能和组件：
@@ -81,7 +84,9 @@
     *   启动 `audio_player_node` 等待语音播报请求。
 
 3.  **观察机器人**:
-    启动后，机器人会自动进行初始化，然后开始依次导航到您在 `patrol_robot/config/patrol_config.yaml` 文件中定义的路径点。到达每个点后，您会听到语音提示，并在 `patrol_robot/picture/` 目录下看到新生成的照片。
+    启动后，机器人会自动进行初始化，然后开始依次导航到您在 `patrol_robot/config/patrol_config.yaml` 文件中定义的路径点。到达每个点后，您会听到语音提示，并在图片保存目录下看到新生成的照片（默认 `~/patrol_robot_pictures/`，可通过 `picture_save_dir` 参数自定义）。
+
+> 如果启动后机器人不动, 请参阅 [`docs/MANUAL.md` 第 6 节](docs/MANUAL.md#6-gazebo--rviz-中机器人不动逐步排查) 的排查指南。
 
 ### 2.3 自定义巡逻路径和速度
 
