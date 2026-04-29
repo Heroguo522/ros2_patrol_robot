@@ -61,7 +61,14 @@ class PatrolNode(BasicNavigator):
 
         # 声明巡逻点列表参数 (字符串数组格式)
         self.declare_parameter('patrol_points', rclpy.Parameter.Type.STRING_ARRAY)
-        
+
+        # 声明图片保存目录参数, 默认放在用户家目录, 避免硬编码路径
+        # 用户可以通过 --ros-args -p picture_save_dir:=/some/path 覆盖
+        default_picture_dir = os.path.join(
+            os.path.expanduser('~'), 'patrol_robot_pictures'
+        )
+        self.declare_parameter('picture_save_dir', default_picture_dir)
+
         self.get_logger().info("巡逻节点已成功初始化.")
 
     def image_callback(self, msg: Image):
@@ -78,8 +85,9 @@ class PatrolNode(BasicNavigator):
         记录当前最新的图像到指定的项目目录中
         """
         # --- 1. 定义并检查目标目录 ---
-        save_dir = '/home/nanimi/my_robot_ws/src/patrol_robot/picture'
-        
+        # 从参数服务器读取, 默认在用户家目录下的 patrol_robot_pictures
+        save_dir = self.get_parameter('picture_save_dir').get_parameter_value().string_value
+
         # 检查目录是否存在, 如果不存在则创建它
         # exist_ok=True 表示如果目录已存在, 不要抛出错误
         try:
@@ -290,12 +298,16 @@ class PatrolNode(BasicNavigator):
         """
         主巡逻逻辑
         """
-        # 1. 等待 Nav2 系统激活
+        # 1. 先设置初始位姿（必须在 waitUntilNav2Active 之前调用）
+        # waitUntilNav2Active() 内部会等待 /amcl_pose 话题, 而 amcl 只有
+        # 在收到一次 /initialpose 之后才会发布 /amcl_pose. 如果先调用
+        # waitUntilNav2Active(), 机器人就会卡在等待初始位姿阶段, 表现为
+        # Gazebo / RViz 中机器人不动, 也不会发出导航目标
+        self.init_robot_pose()
+
+        # 2. 等待 Nav2 系统激活 (会阻塞直到 amcl 与 bt_navigator 都进入 active)
         self.waitUntilNav2Active()
         self.get_logger().info("Nav2 已激活, 巡逻任务开始!")
-
-        # 2. 初始化机器人位姿
-        self.init_robot_pose()
 
         # 3. 获取巡逻点
         patrol_points = self.get_target_points()
