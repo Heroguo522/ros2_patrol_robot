@@ -290,20 +290,21 @@ class PatrolNode(BasicNavigator):
         """
         主巡逻逻辑
         """
-        # 1. 等待 Nav2 系统激活
+        # 须在 waitUntilNav2Active 之前 setInitialPose（含当前仿真时间戳），否则默认
+        # initial_pose 的 stamp 为 0 时 AMCL / map->odom 无法建立，Nav2 卡住。
+        self.init_robot_pose()
+        time.sleep(1.0)
+
         self.waitUntilNav2Active()
         self.get_logger().info("Nav2 已激活, 巡逻任务开始!")
 
-        # 2. 初始化机器人位姿
-        self.init_robot_pose()
-
-        # 3. 获取巡逻点
+        # 2. 获取巡逻点
         patrol_points = self.get_target_points()
         if not patrol_points:
             self.get_logger().error("没有可用的巡逻点, 节点将退出")
             return
         
-        # 4. 开始无限循环巡逻
+        # 3. 开始无限循环巡逻
         point_index = 0
         self.speach_text("巡逻任务开始") 
 
