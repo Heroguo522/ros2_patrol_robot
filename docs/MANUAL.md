@@ -52,22 +52,23 @@
            ▼                                                     │
 ┌─────────────────────┐    NavigateToPose Action   ┌─────────────▼──────────┐
 │ Nav2 (planner +     │◀──────────────────────────│ patrol_node            │
-│ controller + BT)    │──────────────────────────▶│  - BasicNavigator      │
-└─────────────────────┘    /cmd_vel               │  - 读巡逻点配置        │
-                                                  │  - 调用语音服务        │
-                                                  └─────────────┬──────────┘
-                                                                │ srv:PlayAudio
-                                                                ▼
-                                                  ┌────────────────────────┐
-                                                  │ audio_player_node      │
-                                                  │  gTTS + pygame         │
-                                                  └────────────────────────┘
+│ controller + BT)    │──────────────────────────▶│  TaskManager + Skills  │
+└─────────────────────┘    /cmd_vel               └───────┬────────┬─────────┘
+                                                        │        │
+                              srv:PlayAudio             │        │ srv:CaptureImage
+                                                        ▼        ▼
+                                          ┌─────────────────┐  ┌──────────────────┐
+                                          │ audio_player  │  │ capture_image    │
+                                          │ gTTS+pygame   │  │ 相机订阅+存图  │
+                                          └─────────────────┘  └──────────────────┘
 ```
 
 记住三层关系即可：
 - **Gazebo** 提供物理世界与传感器仿真，发布 `/scan`、`/odom`、`/camera_sensor/image_raw` 等话题；
 - **Nav2** 提供「定位 + 路径规划 + 避障」，对外暴露 `NavigateToPose` 这个 Action；
-- **patrol_robot** 是你的应用层：从 YAML 读巡逻点 → 一个一个调用 Nav2 → 到点后请求语音服务 + 拍照。
+- **patrol_robot** 是应用层：`TaskManager` 读巡逻点 → `NavigateSkill` 调 Nav2 → 到点后经 `SpeakSkill` / `CaptureImageSkill` 调用独立服务节点。
+
+> 架构细节见 [`TASK_SKILL_ARCHITECTURE.md`](TASK_SKILL_ARCHITECTURE.md)。
 
 ---
 
@@ -134,7 +135,7 @@ colcon build --symlink-install
 
 ```bash
 source /opt/ros/humble/setup.bash
-source ~/my_robot_ws/install/setup.bash
+source /home/guoth/Desktop/projects/my_robot_ws/install/setup.bash
 ```
 
 然后启动：
@@ -359,6 +360,9 @@ ros2 topic pub --rate 5 /cmd_vel geometry_msgs/msg/Twist '{linear: {x: 0.2}, ang
 # 调用语音服务测试
 ros2 service call /play_audio_service patrol_interfaces/srv/PlayAudio "{text_to_speak: '你好，我是巡逻机器人'}"
 
+# 调用拍照服务测试（需相机话题在发布）
+ros2 service call /capture_image_service patrol_interfaces/srv/CaptureImage "{filename_prefix: 'manual_test'}"
+
 # 给一个一次性导航目标（绕过 patrol_node）
 ros2 action send_goal /navigate_to_pose nav2_msgs/action/NavigateToPose \
   "{pose: {header: {frame_id: 'map'}, pose: {position: {x: 1.0, y: 0.0}, orientation: {w: 1.0}}}}"
@@ -372,14 +376,21 @@ ros2 action send_goal /navigate_to_pose nav2_msgs/action/NavigateToPose \
 patrol_robot/                       # 应用层
 ├── launch/
 │   ├── one_in_all.launch.py        # 顶层一键启动: 仿真 + 导航 + 应用
-│   └── patrol_launch.py            # 仅启动 patrol_node + audio_player_node
-├── config/patrol_config.yaml       # 巡逻点 / 初始位姿 / 图片保存目录
+│   └── patrol_launch.py            # patrol_node + audio + capture 三节点
+├── config/
+│   ├── patrol_config.yaml          # 巡逻点 / 初始位姿 / 任务时序参数
+│   └── capture_config.yaml         # 图片保存目录 / 相机话题
 └── patrol_robot/
-    ├── patrol_node.py              # 核心: BasicNavigator + 拍照 + 调语音服务
-    └── audio_player_node.py        # gTTS + pygame 中文播报服务
+    ├── patrol_node.py              # TaskManager 编排入口
+    ├── task_manager.py             # 状态机与巡逻主循环
+    ├── capture_image_node.py       # 拍照服务
+    ├── audio_player_node.py        # 语音服务
+    └── skills/                     # Navigate / Speak / CaptureImage
 
-patrol_interfaces/                  # 自定义 srv 接口
-└── srv/PlayAudio.srv               # text_to_speak → success, message
+patrol_interfaces/
+└── srv/
+    ├── PlayAudio.srv
+    └── CaptureImage.srv
 
 my_robot_description/               # 机器人 + 仿真世界
 ├── urdf/
@@ -409,7 +420,8 @@ robot_application/                  # 学习用的小工具节点（与一键启
 1. 先看 `one_in_all.launch.py` —— 它把三个子 launch 串起来；
 2. 再看 `gazebo_sim.launch.py` 与 URDF —— 了解仿真侧；
 3. 再看 `navigation2.launch.py` 和 `nav2_params.yaml` —— 了解 Nav2 是如何被「兜底」启动的；
-4. 最后看 `patrol_node.py` —— 这是应用入口，模仿它你就能写自己的 Nav2 应用。
+4. 看 `patrol_node.py` + `task_manager.py` + `skills/` —— 这是 Task/Skill 应用入口；
+5. 详读 [`TASK_SKILL_ARCHITECTURE.md`](TASK_SKILL_ARCHITECTURE.md)。
 
 ---
 
@@ -419,7 +431,7 @@ robot_application/                  # 学习用的小工具节点（与一键启
 A：通常是 `robot_state_publisher` 没拿到 `robot_description`，或者 RViz 的 `Fixed Frame` 不是 `map`。前者重启 launch 即可；后者把 RViz 左上 `Fixed Frame` 改成 `map`。
 
 **Q2：报 `gtts.tts.gTTSError: Failed to connect`？**
-A：gTTS 需要联网，且会被部分网络环境屏蔽。临时关掉播报：把 `patrol_node.py` 里 `self.speach_text(...)` 注释掉；或者把 `audio_player_node.py` 换成离线 TTS。
+A：gTTS 需要联网，且会被部分网络环境屏蔽。临时关掉播报：在 `task_manager.py` 的 `_run_waypoint_actions` 中注释 `SpeakSkill` 调用；或把 `audio_player_node.py` 换成离线 TTS。
 
 **Q3：Gazebo 第一次启动特别慢甚至卡死？**
 A：Gazebo Classic 会下载模型缓存。可在启动前预下载 / 使用本地模型库；或在 `~/.gazebo/models` 中提前放好模型。

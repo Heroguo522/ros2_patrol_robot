@@ -1,0 +1,23 @@
+# colcon
+build/
+install/
+log/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# CMake（包内本地编译）
+CMakeCache.txt
+CMakeFiles/
+
+# 运行时产物
+*.bag
+*.db3
+patrol_images/
+patrol_robot_pictures/
+picture/
+

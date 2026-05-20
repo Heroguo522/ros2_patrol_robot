@@ -6,6 +6,10 @@ patrol_node:
       y: 0.0
       yaw: 0.0
 
+    navigate_retry_wait_sec: 60.0
+    waypoint_stabilize_sec: 2.0
+    inter_waypoint_delay_sec: 3.0
+
     # 巡逻点列表
     # 格式: ["x,y,yaw_in_degrees", "x,y,yaw_in_degrees", ...]
     patrol_points: [

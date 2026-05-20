@@ -28,6 +28,7 @@ setup(
         'console_scripts': [
             'patrol_node = patrol_robot.patrol_node:main',
             'audio_player_node = patrol_robot.audio_player_node:main',
+            'capture_image_node = patrol_robot.capture_image_node:main',
         ],
     },
 )

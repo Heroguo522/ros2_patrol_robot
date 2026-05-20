@@ -14,11 +14,13 @@
 *   **仿真环境**: 使用 Gazebo 搭建了一个包含自定义房间布局的仿真世界。
 *   **机器人模型**: 包含一个两轮差速驱动的机器人模型（URDF/XACRO），并集成了 `ros2_control` 进行物理仿真。
 *   **自主导航**: 利用 Nav2 导航栈实现机器人的定位（AMCL）、路径规划（NavFn）和局部路径跟踪（DWB）。
-*   **核心应用 - 自主巡逻**:
-    *   `patrol_node`: 核心巡逻逻辑节点，继承自 `nav2_simple_commander`，负责从配置文件加载路径点，并控制机器人依次导航。
-    *   `audio_player_node`: 语音播放服务节点，接收文本请求，通过 `gTTS` 和 `pygame` 实现中文语音的实时合成与播放。
+*   **核心应用 - 自主巡逻（TaskManager + Skill）**:
+    *   `patrol_node`: 巡逻编排节点，内含 `TaskManager`，通过 Skill 调度导航与到点动作。
+    *   `audio_player_node`: 语音播放服务节点（`PlayAudio.srv`）。
+    *   `capture_image_node`: 拍照服务节点（`CaptureImage.srv`），订阅相机并保存 JPG。
 *   **模块化接口**:
-    *   `patrol_interfaces`: 一个独立的接口包，定义了语音播放服务的 `PlayAudio.srv` 接口，实现了应用与服务的解耦。
+    *   `patrol_interfaces`: 定义 `PlayAudio.srv`、`CaptureImage.srv`，实现应用与能力节点解耦。
+*   **架构文档**: [`docs/TASK_SKILL_ARCHITECTURE.md`](docs/TASK_SKILL_ARCHITECTURE.md)
 *   **一键启动**: 提供了一个顶层的 `launch` 文件，能够一键启动包括 Gazebo 仿真、Nav2 导航以及所有自定义应用节点在内的完整系统。
 
 ### 技术栈
@@ -80,11 +82,10 @@
     这条命令将会：
     *   启动 Gazebo 仿真环境并加载机器人模型。
     *   启动完整的 Nav2 导航栈，包括 AMCL 定位、路径规划器、控制器等。
-    *   启动 `patrol_node` 开始执行巡逻任务。
-    *   启动 `audio_player_node` 等待语音播报请求。
+    *   启动 `patrol_node`、`audio_player_node`、`capture_image_node`。
 
 3.  **观察机器人**:
-    启动后，机器人会自动进行初始化，然后开始依次导航到您在 `patrol_robot/config/patrol_config.yaml` 文件中定义的路径点。到达每个点后，您会听到语音提示，并在图片保存目录下看到新生成的照片（默认 `~/patrol_robot_pictures/`，可通过 `picture_save_dir` 参数自定义）。
+    启动后，机器人会自动进行初始化，然后开始依次导航到 `patrol_config.yaml` 中的路径点。到达每个点后会有语音播报，照片保存在 `capture_config.yaml` 的 `picture_save_dir`（默认 `~/patrol_images`）。
 
 > 如果启动后机器人不动, 请参阅 [`docs/MANUAL.md` 第 6 节](docs/MANUAL.md#6-gazebo--rviz-中机器人不动逐步排查) 的排查指南。
 

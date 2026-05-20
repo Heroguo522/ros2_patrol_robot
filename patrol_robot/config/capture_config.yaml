@@ -1,0 +1,4 @@
+capture_image_node:
+  ros__parameters:
+    picture_save_dir: "/home/guoth/patrol_images"
+    image_topic: "/camera_sensor/image_raw"

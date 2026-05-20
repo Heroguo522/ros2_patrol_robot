@@ -1,0 +1,6 @@
+# 文件名前缀，空字符串时使用节点默认值 patrol_image
+string filename_prefix
+---
+bool success
+string message
+string saved_path
