@@ -21,6 +21,7 @@
 *   **模块化接口**:
     *   `patrol_interfaces`: 定义 `PlayAudio.srv`、`CaptureImage.srv`，实现应用与能力节点解耦。
 *   **架构文档**: [`docs/TASK_SKILL_ARCHITECTURE.md`](docs/TASK_SKILL_ARCHITECTURE.md)
+*   **IoT 网关**: `robot_gateway_node` — MQTT 遥测上报与远程巡逻任务（MQTTX 演示见 [`docs/ROBOT_GATEWAY_ARCHITECTURE.md`](docs/ROBOT_GATEWAY_ARCHITECTURE.md)）
 *   **一键启动**: 提供了一个顶层的 `launch` 文件，能够一键启动包括 Gazebo 仿真、Nav2 导航以及所有自定义应用节点在内的完整系统。
 
 ### 技术栈
@@ -47,7 +48,7 @@
 2.  **安装 Python 依赖库**:
     本项目使用了几个 Python 库来实现特定功能，请使用 pip 进行安装。
     ```bash
-    pip install gTTS pygame opencv-python tf-transformations
+    pip install gTTS pygame opencv-python tf-transformations paho-mqtt
     ```
 
 3.  **克隆并编译项目代码**:
@@ -82,7 +83,7 @@
     这条命令将会：
     *   启动 Gazebo 仿真环境并加载机器人模型。
     *   启动完整的 Nav2 导航栈，包括 AMCL 定位、路径规划器、控制器等。
-    *   启动 `patrol_node`、`audio_player_node`、`capture_image_node`。
+    *   启动 `patrol_node`、`audio_player_node`、`capture_image_node`、`robot_gateway_node`（需本机 Mosquitto，见网关文档）。
 
 3.  **观察机器人**:
     启动后，机器人会自动进行初始化，然后开始依次导航到 `patrol_config.yaml` 中的路径点。到达每个点后会有语音播报，照片保存在 `capture_config.yaml` 的 `picture_save_dir`（默认 `~/patrol_images`）。

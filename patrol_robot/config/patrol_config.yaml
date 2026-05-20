@@ -1,5 +1,9 @@
 patrol_node:
   ros__parameters:
+    robot_id: "robot_001"
+    auto_start_local_patrol: true
+    default_task_id: "local_patrol"
+
     # 机器人初始位姿 (x, y, yaw in radians)
     initial_pose:
       x: 0.0

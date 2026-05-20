@@ -17,7 +17,8 @@
 7. [自定义：路径点、初始位姿、速度、地图](#7-自定义路径点初始位姿速度地图)
 8. [常用调试命令速查](#8-常用调试命令速查)
 9. [代码结构导览（哪个文件做什么）](#9-代码结构导览哪个文件做什么)
-10. [FAQ](#10-faq)
+10. [IoT 网关与 MQTTX 云边演示](#10-iot-网关与-mqttx-云边演示)
+11. [FAQ](#11-faq)
 
 ---
 
@@ -103,7 +104,7 @@ sudo apt install -y \
 ### 3.3 安装 Python 依赖
 
 ```bash
-pip3 install --user gTTS pygame opencv-python tf-transformations
+pip3 install --user gTTS pygame opencv-python tf-transformations paho-mqtt
 ```
 
 > `gTTS` 在第一次播报时会**联网**调用 Google 翻译的 TTS 接口；如果你的网络无法访问 Google，可考虑改用 `pyttsx3`/`edge-tts`，相关代码在 `patrol_robot/patrol_robot/audio_player_node.py`。
@@ -376,7 +377,7 @@ ros2 action send_goal /navigate_to_pose nav2_msgs/action/NavigateToPose \
 patrol_robot/                       # 应用层
 ├── launch/
 │   ├── one_in_all.launch.py        # 顶层一键启动: 仿真 + 导航 + 应用
-│   └── patrol_launch.py            # patrol_node + audio + capture 三节点
+│   └── patrol_launch.py            # patrol + audio + capture + gateway
 ├── config/
 │   ├── patrol_config.yaml          # 巡逻点 / 初始位姿 / 任务时序参数
 │   └── capture_config.yaml         # 图片保存目录 / 相机话题
@@ -385,12 +386,17 @@ patrol_robot/                       # 应用层
     ├── task_manager.py             # 状态机与巡逻主循环
     ├── capture_image_node.py       # 拍照服务
     ├── audio_player_node.py        # 语音服务
+    ├── robot_gateway_node.py       # MQTT 网关
+    ├── gateway/                    # 遥测、MQTT、命令处理
     └── skills/                     # Navigate / Speak / CaptureImage
 
 patrol_interfaces/
 └── srv/
     ├── PlayAudio.srv
-    └── CaptureImage.srv
+    ├── CaptureImage.srv
+    ├── RobotStatus.msg
+    ├── SubmitPatrolTask.srv
+    └── ControlPatrol.srv
 
 my_robot_description/               # 机器人 + 仿真世界
 ├── urdf/
@@ -425,7 +431,23 @@ robot_application/                  # 学习用的小工具节点（与一键启
 
 ---
 
-## 10. FAQ
+## 10. IoT 网关与 MQTTX 云边演示
+
+完整说明见 [`ROBOT_GATEWAY_ARCHITECTURE.md`](ROBOT_GATEWAY_ARCHITECTURE.md)。
+
+**快速步骤**：
+
+1. 安装并启动 Mosquitto：`sudo apt install mosquitto && sudo systemctl start mosquitto`
+2. MQTTX 连接 `127.0.0.1:1883`，订阅 `robots/robot_001/#`
+3. 启动：`ros2 launch patrol_robot one_in_all.launch.py`
+4. 向 Topic `robots/robot_001/command` 发布 `docs/mqtt_demo/start_inspection_A.json` 内容
+5. 观察 `telemetry`、`command/ack`、`events`，以及 Gazebo 中机器人运动
+
+无 Broker 时：`ros2 launch patrol_robot one_in_all.launch.py enable_gateway:=false`
+
+---
+
+## 11. FAQ
 
 **Q1：RViz 里机器人模型显示成红色 / 没颜色 / 没模型？**
 A：通常是 `robot_state_publisher` 没拿到 `robot_description`，或者 RViz 的 `Fixed Frame` 不是 `map`。前者重启 launch 即可；后者把 RViz 左上 `Fixed Frame` 改成 `map`。

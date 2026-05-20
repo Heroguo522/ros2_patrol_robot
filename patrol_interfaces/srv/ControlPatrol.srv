@@ -1,0 +1,7 @@
+uint8 PAUSE=1
+uint8 RESUME=2
+uint8 CANCEL=3
+uint8 action
+---
+bool success
+string message

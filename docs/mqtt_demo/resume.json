@@ -1,0 +1,5 @@
+{
+  "command_id": "demo-resume-001",
+  "action": "resume_patrol",
+  "task_id": "inspection_A"
+}

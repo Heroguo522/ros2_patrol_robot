@@ -1,0 +1,5 @@
+{
+  "command_id": "demo-cancel-001",
+  "action": "cancel_patrol",
+  "task_id": "inspection_A"
+}

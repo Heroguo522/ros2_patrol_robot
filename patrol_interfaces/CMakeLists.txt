@@ -7,10 +7,16 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(builtin_interfaces REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/RobotStatus.msg"
   "srv/PlayAudio.srv"
   "srv/CaptureImage.srv"
+  "srv/SubmitPatrolTask.srv"
+  "srv/ControlPatrol.srv"
+  DEPENDENCIES geometry_msgs builtin_interfaces
 )
 
 ament_package()

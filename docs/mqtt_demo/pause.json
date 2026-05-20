@@ -1,0 +1,5 @@
+{
+  "command_id": "demo-pause-001",
+  "action": "pause_patrol",
+  "task_id": "inspection_A"
+}

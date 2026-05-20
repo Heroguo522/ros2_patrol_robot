@@ -241,7 +241,50 @@ ros2 service call /capture_image_service patrol_interfaces/srv/CaptureImage \
 
 ---
 
-## 10. 与旧版差异
+## 10. 编排演进：行为树（BT）
+
+### 10.1 现状
+
+`TaskManager` 使用 **`PatrolTaskState` 枚举 + `_patrol_loop()`**，不是 Behavior Tree。  
+**Nav2** 内部已有 BT（`bt_navigator`），只管单次导航的运动与恢复，与业务编排分层。
+
+### 10.2 BT 在做什么
+
+BT 通过周期性 **tick**，节点返回 **SUCCESS / FAILURE / RUNNING**，由 Sequence、Fallback 等组合节点决定「当前做谁、成功后走哪枝、失败后是否重试/换策略」。  
+可理解为持续回答：**现在执行什么、下一步走哪条分支**——与状态机「事件驱动切换状态」是不同模型，**并非比状态机更高级**，而是**更擅长**多分支、重试链、可配置子树。
+
+### 10.3 何时考虑把 TaskManager 换成 BT
+
+| 仍用状态机即可 | 可考虑业务层 BT |
+|----------------|-----------------|
+| 路点循环 + 固定到点动作链 | 到点动作可配置、种类多 |
+| 少量 pause/cancel | 大量异常分支、并行监控（电量/障碍） |
+| 逻辑主要在调 Skill/服务 | 运维希望改 XML/YAML 而不改 Python |
+
+### 10.4 可行迁移方式（推荐分层）
+
+```
+MQTT / submit_patrol_task → 黑板/触发器 → 业务 BT（替代 TaskManager 循环）
+                                              ↓
+                                         Skill（不变）
+                                              ↓
+                                         Nav2 导航 BT（不变）
+```
+
+- **只替换编排层**；`NavigateSkill` / `SpeakSkill` / `CaptureImageSkill` 映射为 BT 叶子节点即可。  
+- 远程任务、`/robot/status`、MQTT 网关接口可保持不变，BT 只改「任务怎么跑完」。  
+- 需注意：现有 `execute()` 阻塞与 `time.sleep` 需改为 tick 友好（RUNNING 轮询或异步）。  
+- 技术选型：全 Python 包可优先考虑 **py_trees**；若与 Nav2 运维统一，可用 **BehaviorTree.CPP**（与 `nav2_behavior_tree` 同生态）。
+
+### 10.5 建议演进顺序
+
+1. 配置化 `waypoint_actions`（仍用状态机）  
+2. 将「单航点：导航 → 动作链」抽成可复用子流程  
+3. 业务复杂度仍失控时，再引入 BT 根树，避免与 Nav2 运动 BT 合并为一棵巨树  
+
+---
+
+## 11. 与旧版差异
 
 | 旧版 `patrol_node` | 新版 |
 |--------------------|------|

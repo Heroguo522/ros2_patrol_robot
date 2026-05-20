@@ -1,0 +1,9 @@
+string robot_id
+string task_id
+string state
+uint32 waypoint_index
+uint32 waypoint_total
+geometry_msgs/Pose pose
+float32 battery_percent
+string fault_code
+builtin_interfaces/Time stamp

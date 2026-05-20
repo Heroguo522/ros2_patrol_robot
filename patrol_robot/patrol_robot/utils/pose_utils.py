@@ -44,3 +44,23 @@ def parse_patrol_points(node: Node, logger) -> list[PoseStamped]:
         f"无法解析巡逻点 '{point_str}'，格式应为 'x,y,yaw_degrees': {e}")
 
   return poses
+
+
+def parse_waypoint_strings(
+  node: Node, logger, waypoints: list[str],
+) -> list[PoseStamped]:
+  if not waypoints:
+    return []
+  poses = []
+  for point_str in waypoints:
+    try:
+      parts = point_str.replace(' ', '').split(',')
+      x = float(parts[0])
+      y = float(parts[1])
+      yaw_degrees = float(parts[2])
+      yaw_radians = math.radians(yaw_degrees)
+      poses.append(pose_from_xyyaw(node, x, y, yaw_radians))
+      logger.info(f'  - 路点: x={x}, y={y}, yaw={yaw_degrees}°')
+    except (ValueError, IndexError) as e:
+      logger.warn(f"无法解析路点 '{point_str}': {e}")
+  return poses

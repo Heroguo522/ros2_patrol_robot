@@ -2,6 +2,9 @@ from setuptools import find_packages, setup
 from glob import glob
 import os
 package_name = 'patrol_robot'
+_pkg_root = os.path.dirname(os.path.dirname(__file__))
+_mqtt_demo_files = glob(
+  os.path.join(_pkg_root, 'docs', 'mqtt_demo', '*.json'))
 
 setup(
     name=package_name,
@@ -16,6 +19,7 @@ setup(
         (os.path.join('share', package_name, 'launch'), glob('launch/*.py')),
         
         (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
+        (os.path.join('share', package_name, 'mqtt_demo'), _mqtt_demo_files),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -29,6 +33,7 @@ setup(
             'patrol_node = patrol_robot.patrol_node:main',
             'audio_player_node = patrol_robot.audio_player_node:main',
             'capture_image_node = patrol_robot.capture_image_node:main',
+            'robot_gateway_node = patrol_robot.robot_gateway_node:main',
         ],
     },
 )
