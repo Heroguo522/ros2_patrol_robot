@@ -8,7 +8,8 @@
 
 | 文件 | 用途 |
 |------|------|
-| `start_inspection_A.json` | 远程启动 3 点巡逻 |
+| `start_inspection_A.json` | 启动 DSL 任务 `inspection_route_A` |
+| `start_legacy_patrol.json` | 启动兼容任务 `legacy_room_patrol` |
 | `pause.json` | 暂停 |
 | `resume.json` | 恢复 |
 | `cancel.json` | 取消 |

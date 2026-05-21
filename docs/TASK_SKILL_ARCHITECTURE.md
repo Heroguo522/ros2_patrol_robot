@@ -1,6 +1,7 @@
 # 巡逻机器人任务/技能架构
 
-本文档描述 `patrol_robot` 应用层的 **TaskManager + Skill** 重构设计，便于扩展新的到点动作或替换能力实现。
+本文档描述 `patrol_robot` 应用层的 **TaskManager + Skill** 基础能力设计。
+若需要按 YAML 动态编排任务，请同时参考 [`TASK_DSL_ARCHITECTURE.md`](TASK_DSL_ARCHITECTURE.md)。
 
 ---
 
@@ -167,7 +168,7 @@ string saved_path
 patrol_node:
   ros__parameters:
     initial_pose: { x, y, yaw }
-    patrol_points: ["x,y,yaw_deg", ...]
+    default_task_name: "legacy_room_patrol"
     navigate_retry_wait_sec: 60.0
     waypoint_stabilize_sec: 2.0
     inter_waypoint_delay_sec: 3.0
@@ -236,7 +237,7 @@ ros2 service call /capture_image_service patrol_interfaces/srv/CaptureImage \
 ## 9. 扩展指南
 
 1. **新增 Skill**：继承 `Skill`，实现 `execute()`；若为重型 IO，建议仿照拍照/语音拆独立节点 + srv。
-2. **修改到点流程**：编辑 `TaskManager._run_waypoint_actions()`，或后续引入 `waypoint_actions` 配置 DSL。
+2. **修改到点流程**：优先通过任务 DSL（`stations.yaml` + `tasks/*.yaml`）调整步骤，编排器会按 YAML 顺序执行。
 3. **新增巡逻任务**：可新增 `TaskManager` 子类或策略对象，复用同一套 Skill 实例。
 
 ---

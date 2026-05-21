@@ -1,0 +1,27 @@
+name: inspection_route_A
+task_id: inspection_A
+description: 一号巡检路线，演示 YAML DSL 顺序步骤
+on_failure: retry_step
+steps:
+  - type: navigate
+    target: station_1
+  - type: speak
+    text: "到达一号巡检点"
+    optional: true
+  - type: capture_image
+    save_tag: station_1
+  - type: detect_anomaly
+    model: mock_detector
+  - type: report
+    channel: mqtt
+  - type: navigate
+    target: station_2
+  - type: speak
+    text: "到达二号巡检点"
+    optional: true
+  - type: capture_image
+    save_tag: station_2
+  - type: detect_anomaly
+    model: mock_detector
+  - type: report
+    channel: mqtt

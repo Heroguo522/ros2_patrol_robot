@@ -12,7 +12,9 @@ from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 
 from patrol_robot.skills.capture_image_skill import CaptureImageSkill
+from patrol_robot.skills.detect_anomaly_skill import DetectAnomalySkill
 from patrol_robot.skills.navigate_skill import NavigateSkill
+from patrol_robot.skills.report_skill import ReportSkill
 from patrol_robot.skills.speak_skill import SpeakSkill
 from patrol_robot.task_manager import TaskManager
 
@@ -32,18 +34,21 @@ class PatrolNode(BasicNavigator):
     self.declare_parameter('initial_pose.x', 0.0)
     self.declare_parameter('initial_pose.y', 0.0)
     self.declare_parameter('initial_pose.yaw', 0.0)
-    self.declare_parameter('patrol_points', rclpy.Parameter.Type.STRING_ARRAY)
 
     self._status_pub = self.create_publisher(RobotStatus, '/robot/status', 10)
 
     navigate_skill = NavigateSkill(self, self, self.tf_buffer)
     speak_skill = SpeakSkill(self)
     capture_skill = CaptureImageSkill(self)
+    detect_skill = DetectAnomalySkill(self)
+    report_skill = ReportSkill(self)
     self.task_manager = TaskManager(
       self,
       navigate_skill,
       speak_skill,
       capture_skill,
+      detect_skill,
+      report_skill,
       status_publisher=self._publish_robot_status,
       robot_id=self.robot_id,
     )
@@ -59,17 +64,9 @@ class PatrolNode(BasicNavigator):
     self._status_pub.publish(msg)
 
   def _handle_submit_patrol_task(self, request, response):
-    initial_pose = None
-    if request.use_initial_pose:
-      initial_pose = (
-        request.initial_pose_x,
-        request.initial_pose_y,
-        request.initial_pose_yaw,
-      )
-    ok, message = self.task_manager.submit_patrol_task(
+    ok, message = self.task_manager.submit_task(
+      request.task_name,
       request.task_id,
-      list(request.waypoints),
-      initial_pose,
     )
     response.success = ok
     response.message = message

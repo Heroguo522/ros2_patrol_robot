@@ -146,7 +146,7 @@ sequenceDiagram
 
 | `action` | ROS 行为 |
 |----------|----------|
-| `start_patrol` | `SubmitPatrolTask` |
+| `start_task` | `SubmitPatrolTask` |
 | `update_patrol` | 先 cancel 再提交新路点 |
 | `pause_patrol` / `resume_patrol` / `cancel_patrol` | `ControlPatrol` |
 
@@ -159,7 +159,7 @@ sequenceDiagram
 | 能编排 | JSON / 服务字段 | 说明 |
 |--------|-----------------|------|
 | 任务标识 | `task_id` | 写入遥测，区分本地 `local_patrol` 与远程任务 |
-| 巡逻路点 | `waypoints` | 字符串数组 `"x,y,yaw_deg"`，替代或覆盖 YAML 路点 |
+| 任务模板 | `task_name` | 对应 `config/tasks/*.yaml` 中的任务名 |
 | 初始位姿 | `initial_pose`（可选） | JSON 含该字段时重设 AMCL（含 `{0,0,0}`）；省略则不改动 |
 | 生命周期 | `action` | 启动 / 热更新路点 / 暂停 / 恢复 / 取消 |
 
@@ -172,7 +172,7 @@ sequenceDiagram
 | 命令受理 | `command/ack` | 立刻返回：`accepted` + `message`（如「任务已排队」），**不是**全程跑完 |
 | 执行过程 | `telemetry`、`events`、`/robot/status` | `state`、`progress`、`fault_code` 等持续更新 |
 
-纯 MQTT 演示时建议 `patrol_config.yaml` 设 `auto_start_local_patrol: false`，避免与 YAML 自动巡逻抢任务。
+纯 MQTT 演示时建议 `patrol_config.yaml` 设 `auto_start_task: false`，避免默认任务抢占。
 
 ---
 
@@ -221,7 +221,7 @@ sequenceDiagram
 | Service | `/submit_patrol_task` | `patrol_interfaces/srv/SubmitPatrolTask` |
 | Service | `/control_patrol`     | `patrol_interfaces/srv/ControlPatrol`    |
 
-`SubmitPatrolTask`：`use_initial_pose=true` 时应用 `initial_pose_x/y/yaw`；MQTT 命令 JSON 含 `initial_pose` 时由网关自动置位。
+`SubmitPatrolTask`：提交 `task_name` + `task_id`，由 patrol_node 在 DSL 库中查找并执行。
 
 ---
 
@@ -261,7 +261,7 @@ ros2 launch patrol_robot one_in_all.launch.py
 mosquitto_sub -h 127.0.0.1 -t 'robots/robot_001/#' -v
 
 mosquitto_pub -h 127.0.0.1 -t 'robots/robot_001/command' -m \
-  '{"command_id":"t1","action":"start_patrol","task_id":"inspection_A","waypoints":["3.2,-1.0,0.0","0.0,0.0,0.0"]}'
+  '{"command_id":"t1","action":"start_task","task_name":"inspection_route_A","task_id":"inspection_A"}'
 ```
 
 ---
@@ -272,7 +272,7 @@ mosquitto_pub -h 127.0.0.1 -t 'robots/robot_001/command' -m \
 | 文件                                        | 内容                                      |
 | ----------------------------------------- | --------------------------------------- |
 | `patrol_robot/config/gateway_config.yaml` | Broker、`robot_id`、主题前缀、遥测频率、mock 电量     |
-| `patrol_robot/config/patrol_config.yaml`  | 路点、`robot_id`、`auto_start_local_patrol` |
+| `patrol_robot/config/patrol_config.yaml`  | `robot_id`、`auto_start_task`、`default_task_name` |
 
 
 ---

@@ -1,124 +1,103 @@
-# 自主巡逻机器人 · 新手操作手册
+# 自主巡逻机器人 · 操作手册
 
-本手册面向**第一次接触 ROS 2 的同学**，目标是让你在不深入研究每一行代码的前提下，把整套仿真+导航+巡逻系统在自己的电脑上跑起来，并且看懂机器人**为什么做、做了什么、下一步去哪儿**。
+面向第一次跑通本项目的同学：在不细读全部源码的前提下，完成 **仿真 + Nav2 + YAML 任务巡逻**，并知道出问题该查哪里。
 
-> 如果你已经熟悉 ROS 2，仅想快速上手，可直接跳到 [§4 一键运行](#4-一键运行)。
+已熟悉 ROS 2 可直接看 [快速运行](#快速运行)。任务 DSL、Skill 分层、MQTT 网关的详细设计分别见：
+
+- [`TASK_DSL_ARCHITECTURE.md`](TASK_DSL_ARCHITECTURE.md) — `stations.yaml` / `tasks/*.yaml`
+- [`TASK_SKILL_ARCHITECTURE.md`](TASK_SKILL_ARCHITECTURE.md) — TaskManager + Skill
+- [`ROBOT_GATEWAY_ARCHITECTURE.md`](ROBOT_GATEWAY_ARCHITECTURE.md) — `robot_gateway_node` 与 MQTTX 演示
 
 ---
 
 ## 目录
 
 1. [项目能做什么](#1-项目能做什么)
-2. [系统架构与数据流](#2-系统架构与数据流)
+2. [系统架构](#2-系统架构)
 3. [环境准备](#3-环境准备)
-4. [一键运行](#4-一键运行)
-5. [初学者最常踩的 3 个坑](#5-初学者最常踩的-3-个坑)
-6. [Gazebo / RViz 中机器人不动？逐步排查](#6-gazebo--rviz-中机器人不动逐步排查)
-7. [自定义：路径点、初始位姿、速度、地图](#7-自定义路径点初始位姿速度地图)
-8. [常用调试命令速查](#8-常用调试命令速查)
-9. [代码结构导览（哪个文件做什么）](#9-代码结构导览哪个文件做什么)
-10. [IoT 网关与 MQTTX 云边演示](#10-iot-网关与-mqttx-云边演示)
-11. [FAQ](#11-faq)
+4. [快速运行](#4-快速运行)
+5. [配置与自定义](#5-配置与自定义)
+6. [机器人不动？排查清单](#6-机器人不动排查清单)
+7. [常用调试命令](#7-常用调试命令)
+8. [代码结构](#8-代码结构)
+9. [MQTT 云边演示（可选）](#9-mqtt-云边演示可选)
+10. [FAQ](#10-faq)
 
 ---
 
 ## 1. 项目能做什么
 
-启动一条命令后，你会看到：
+一条 launch 拉起整套系统后：
 
-- **Gazebo** 中弹出一个房间和一台两轮差速机器人；
-- **RViz2** 中加载好地图、机器人模型、激光雷达扫描和 Nav2 的代价地图；
-- 机器人**自动逐个**前往 `patrol_robot/config/patrol_config.yaml` 中预设的巡逻点；
-- 到达每个点后**用 gTTS 中文语音播报**「已到达目标点，准备拍照」「拍照完成」「三秒后前往下一个目标点」等；
-- 同时调用相机话题保存一张**当前视野的 JPG 图片**到本地。
+| 能力 | 说明 |
+|------|------|
+| Gazebo 仿真 | 自定义房间 + 差速底盘 + 激光 / 相机 / IMU |
+| Nav2 导航 | AMCL 定位 + 全局规划 + DWB 局部跟踪 |
+| YAML 任务巡逻 | `TaskOrchestrator` 按 `tasks/*.yaml` 执行 `navigate` / `speak` / `capture_image` 等步骤 |
+| 到点拍照 | `capture_image_node` 订阅 `/camera_sensor/image_raw`，保存 JPG |
+| 中文语音 | `audio_player_node` 通过 gTTS 在线合成（需外网） |
+| IoT 网关（可选） | `robot_gateway_node` 将 `/robot/status` 上报 MQTT，并接收远程任务 |
 
-整个流程是 ROS 2 中**仿真 + 定位 + 导航 + 应用层**最经典的小项目骨架，特别适合用来学习 Nav2、`ros2_control`、xacro、launch、自定义 srv 等知识点。
+默认自动执行 `legacy_room_patrol`；也可通过服务或 MQTT 切换为 `inspection_route_A` 等任务。
 
 ---
 
-## 2. 系统架构与数据流
+## 2. 系统架构
 
 ```
-┌─────────────────────┐    /robot_description     ┌────────────────────────┐
-│ robot_state_pub     │──────────────────────────▶│ Gazebo (仿真物理)      │
-│  (xacro→URDF)       │                            │  - ros2_control 插件   │
-└─────────────────────┘                            │  - 雷达/相机/IMU 插件  │
-          │                                        └────────────┬───────────┘
-          │ TF (base_link → wheels …)                           │
-          ▼                                                     ▼
-┌─────────────────────┐    /scan /odom /clock      ┌────────────────────────┐
-│ AMCL (定位)         │◀──────────────────────────│ /cmd_vel  →  diff_drive │
-└──────────┬──────────┘                            │             controller │
-           │ map → odom TF                          └────────────┬───────────┘
-           ▼                                                     │
-┌─────────────────────┐    NavigateToPose Action   ┌─────────────▼──────────┐
-│ Nav2 (planner +     │◀──────────────────────────│ patrol_node            │
-│ controller + BT)    │──────────────────────────▶│  TaskManager + Skills  │
-└─────────────────────┘    /cmd_vel               └───────┬────────┬─────────┘
-                                                        │        │
-                              srv:PlayAudio             │        │ srv:CaptureImage
-                                                        ▼        ▼
-                                          ┌─────────────────┐  ┌──────────────────┐
-                                          │ audio_player  │  │ capture_image    │
-                                          │ gTTS+pygame   │  │ 相机订阅+存图  │
-                                          └─────────────────┘  └──────────────────┘
+Gazebo ──/scan, /odom, /camera──▶ AMCL + Nav2 ◀── NavigateSkill ◀── patrol_node
+                                              │         TaskManager
+                                              │              │
+                                              │    TaskOrchestrator + skills/*
+                                              ▼              ▼
+                                         /cmd_vel      PlayAudio / CaptureImage
+                                                         │              │
+                                              audio_player_node   capture_image_node
+
+patrol_node ──/robot/status──▶ robot_gateway_node ──MQTT──▶ MQTTX / 云端
 ```
 
-记住三层关系即可：
-- **Gazebo** 提供物理世界与传感器仿真，发布 `/scan`、`/odom`、`/camera_sensor/image_raw` 等话题；
-- **Nav2** 提供「定位 + 路径规划 + 避障」，对外暴露 `NavigateToPose` 这个 Action；
-- **patrol_robot** 是应用层：`TaskManager` 读巡逻点 → `NavigateSkill` 调 Nav2 → 到点后经 `SpeakSkill` / `CaptureImageSkill` 调用独立服务节点。
+三层关系：
 
-> 架构细节见 [`TASK_SKILL_ARCHITECTURE.md`](TASK_SKILL_ARCHITECTURE.md)。
+1. **仿真层**（`my_robot_description`）：物理、传感器、`ros2_control` 差速控制。
+2. **导航层**（`robot_navigation2` + Nav2）：`NavigateToPose` Action。
+3. **应用层**（`patrol_robot`）：YAML 任务编排 + 语音/拍照/检测/上报 Skill。
 
 ---
 
 ## 3. 环境准备
 
-### 3.1 操作系统与 ROS 2
+### 3.1 推荐环境
 
-- 推荐 **Ubuntu 22.04** + **ROS 2 Humble**。Humble 是 LTS 版本，与本项目使用的 `nav2`、`gazebo_ros_pkgs`、`ros2_control` API 完全匹配。
-- 如果你用 ROS 2 Iron / Jazzy，部分 launch 接口和 `nav2_simple_commander` 行为可能略有差异，本项目未做兼容测试。
+- **Ubuntu 22.04** + **ROS 2 Humble**（本项目未在其他发行版上验证）。
 
-### 3.2 安装系统依赖
+### 3.2 系统依赖
 
 ```bash
 sudo apt update
 sudo apt install -y \
-  ros-humble-nav2-bringup \
-  ros-humble-navigation2 \
+  ros-humble-nav2-bringup ros-humble-navigation2 \
   ros-humble-nav2-simple-commander \
-  ros-humble-gazebo-ros-pkgs \
-  ros-humble-gazebo-ros2-control \
-  ros-humble-ros2-control \
-  ros-humble-ros2-controllers \
-  ros-humble-joint-state-publisher \
-  ros-humble-xacro \
-  ros-humble-cv-bridge \
-  ros-humble-tf-transformations \
+  ros-humble-gazebo-ros-pkgs ros-humble-gazebo-ros2-control \
+  ros-humble-ros2-control ros-humble-ros2-controllers \
+  ros-humble-joint-state-publisher ros-humble-xacro \
+  ros-humble-cv-bridge ros-humble-tf-transformations \
   python3-colcon-common-extensions
 ```
 
-> 上面 `ros-humble-gazebo-ros2-control` 不能漏，否则 Gazebo 启动后**机器人能显示但不会动**——因为没有把 `/cmd_vel` 接到 Gazebo 的轮子上。
+> `ros-humble-gazebo-ros2-control` 缺失时，Gazebo 里机器人**能显示但不会响应** `/cmd_vel`。
 
-### 3.3 安装 Python 依赖
-
-```bash
-pip3 install --user gTTS pygame opencv-python tf-transformations paho-mqtt
-```
-
-> `gTTS` 在第一次播报时会**联网**调用 Google 翻译的 TTS 接口；如果你的网络无法访问 Google，可考虑改用 `pyttsx3`/`edge-tts`，相关代码在 `patrol_robot/patrol_robot/audio_player_node.py`。
-
-### 3.4 创建工作区并克隆仓库
+### 3.3 Python 依赖
 
 ```bash
-mkdir -p ~/my_robot_ws/src
-cd ~/my_robot_ws/src
-git clone <你的仓库地址> .
-cd ~/my_robot_ws
+pip3 install --user gTTS pygame opencv-python tf-transformations paho-mqtt PyYAML
 ```
 
-### 3.5 编译
+> `gTTS` 首次播报需访问 Google；离线环境请在任务 YAML 中对 `speak` 设置 `optional: true`，或改用本地 TTS（改 `audio_player_node.py`）。
+
+### 3.4 工作区与编译
+
+将本仓库各功能包放入 `colcon` 工作区 `src`（例如 `~/my_robot_ws/src`），在工作区根目录：
 
 ```bash
 source /opt/ros/humble/setup.bash
@@ -126,139 +105,93 @@ cd ~/my_robot_ws
 colcon build --symlink-install
 ```
 
-`--symlink-install` 的好处是改 Python / launch / yaml 文件不用重新 `colcon build`，只需重启 launch。
+`--symlink-install` 下修改 Python / launch / yaml **无需重新编译**，重启 launch 即可。
 
 ---
 
-## 4. 一键运行
+## 4. 快速运行
 
-每开一个新终端都需要两步 source：
+每个新终端：
 
 ```bash
 source /opt/ros/humble/setup.bash
-source /home/guoth/Desktop/projects/my_robot_ws/install/setup.bash
+source ~/my_robot_ws/install/setup.bash   # 按你的实际工作区路径修改
 ```
 
-然后启动：
+启动：
 
 ```bash
 ros2 launch patrol_robot one_in_all.launch.py
 ```
 
-正常情况下会依次发生：
+无 MQTT Broker 时可关闭网关：
 
-1. Gazebo 弹出房间 + 机器人；
-2. ROS 2 控制器 `robot_joint_state_broadcaster` 与 `robot_diff_driver_controller` 被加载并 `active`；
-3. Nav2 全栈节点启动（map_server、amcl、planner_server、controller_server、bt_navigator、behavior_server、…）；
-4. RViz2 弹出，显示地图、激光、机器人模型；
-5. 终端里能看到 `已连接到语音播放服务`、`Nav2 is ready for use!`、`巡逻任务开始!`；
-6. 机器人开始往第一个巡逻点 `(3.2, -1.0)` 移动。
+```bash
+ros2 launch patrol_robot one_in_all.launch.py enable_gateway:=false
+```
+
+**正常日志顺序（约 30~60 秒）**：
+
+1. Gazebo、RViz2 弹出；
+2. 控制器 `robot_joint_state_broadcaster`、`robot_diff_driver_controller` 变为 `active`；
+3. 终端出现 `Nav2 已激活`、`auto_start_task: legacy_room_patrol`；
+4. 机器人开始第一个 `navigate` 步骤。
+
+**常见启动问题**：
+
+| 现象 | 处理 |
+|------|------|
+| `Package 'patrol_robot' not found` | 漏 `source install/setup.bash` 或编译失败 |
+| 冷启动很久 | 首次 Gazebo 下载模型，属正常 |
+| `speak` 超时 / `Failed to connect` | gTTS 无网；对 `speak` 加 `optional: true` 或关网测试 |
+| `colcon` 报 `audio_config.yaml` 不存在 | `build/patrol_robot/config/` 下有断链；删除后 `colcon build --packages-select patrol_robot` |
 
 ---
 
-## 5. 初学者最常踩的 3 个坑
+## 5. 配置与自定义
 
-### 5.1 没等 Gazebo / Nav2 启动完就以为「卡死了」
+### 5.1 核心配置文件
 
-整个一键启动会同时拉起几十个节点，**第一次冷启动 30~60 秒是正常的**。在你看到 `Nav2 is ready for use!` 之前，机器人不会动。
+| 文件 | 作用 |
+|------|------|
+| `patrol_robot/config/patrol_config.yaml` | `default_task_name`、`auto_start_task`、`initial_pose`、`navigate_retry_wait_sec` |
+| `patrol_robot/config/stations.yaml` | 站点坐标（`navigate` 的 `target` 引用） |
+| `patrol_robot/config/tasks/*.yaml` | 任务步骤 DSL |
+| `patrol_robot/config/capture_config.yaml` | `picture_save_dir`、`image_topic` |
+| `patrol_robot/config/gateway_config.yaml` | MQTT Broker、topic 前缀 |
+| `robot_navigation2/config/nav2_params.yaml` | 速度、代价地图、规划器参数 |
+| `robot_navigation2/maps/room.{yaml,pgm}` | 占栅地图 |
 
-### 5.2 source 顺序错误 / 漏 source
+### 5.2 改巡逻路线
 
-新开终端**必须**两条都 source：
-```bash
-source /opt/ros/humble/setup.bash
-source ~/my_robot_ws/install/setup.bash
-```
-否则会出现 `Package 'patrol_robot' not found` 或者 `nav2_simple_commander` 找不到。
+编辑 `stations.yaml` 与 `tasks/*.yaml`，保存后**重启 launch**（`--symlink-install` 下无需 `colcon build`）。
 
-### 5.3 用 `sudo` 启动 / 在 root 下运行
+最小示例：
 
-`gTTS` 会写临时文件、`pygame` 需要访问音频设备、Gazebo 需要 GUI 显示——这些都和**当前用户**绑定。请用普通用户运行，**不要** `sudo ros2 launch …`。
+```yaml
+# stations.yaml
+stations:
+  station_1: { x: 3.2, y: -1.0, yaw_deg: 0.0 }
 
----
-
-## 6. Gazebo / RViz 中机器人不动？逐步排查
-
-> 这是这个项目最常见的问题，本节给一个**自顶向下**的检查流程。本仓库已经修复了一处导致初始位姿没设的代码 bug（详见 §6.1），如果你拉了最新代码后仍然不动，请按下面的顺序继续排查。
-
-### 6.1 ⚠ 已知 bug：调用顺序错误（已修复）
-
-旧版 `patrol_robot/patrol_robot/patrol_node.py` 的 `patrol_loop()` 写法是：
-
-```python
-self.waitUntilNav2Active()   # 先等 Nav2 激活
-self.init_robot_pose()       # 再设初始位姿
-```
-
-但 `BasicNavigator.waitUntilNav2Active()` 在使用 AMCL 时会**反复阻塞**直到收到一次 `/amcl_pose`，而 AMCL 又必须先收到一次 `/initialpose` 才会发布 `/amcl_pose`。**于是程序会永远卡在 `Setting initial pose` / `Waiting for amcl_pose to be received` 的循环里**，机器人根本不会动。
-
-正确顺序应当先调用 `setInitialPose(...)`，再 `waitUntilNav2Active()`：
-
-```python
-self.init_robot_pose()       # 先发布 /initialpose
-self.waitUntilNav2Active()   # 再等待 amcl/bt_navigator 进入 active
+# tasks/my_route.yaml
+name: my_route
+steps:
+  - type: navigate
+    target: station_1
+  - type: speak
+    text: "到达一号点"
+    optional: true
+  - type: capture_image
+    save_tag: station_1
 ```
 
-本项目最新代码已经按官方示例修正这个顺序。
+切换默认任务：在 `patrol_config.yaml` 中设置 `default_task_name: "my_route"`。
 
-### 6.2 终端日志要看哪里
+步骤类型、`optional`、MQTT `start_task` 等见 [`TASK_DSL_ARCHITECTURE.md`](TASK_DSL_ARCHITECTURE.md)。
 
-在启动 launch 的终端里搜索这几个关键字：
+### 5.3 改初始位姿
 
-| 关键字 | 含义 |
-| --- | --- |
-| `Configuring` / `Activating` | Nav2 lifecycle 正常推进，等就行 |
-| `Nav2 is ready for use!` | Nav2 全栈已激活 |
-| `Setting initial pose` | `BasicNavigator` 正在向 AMCL 发初始位姿 |
-| `Waiting for amcl_pose to be received` 反复刷屏 | **AMCL 没在听 / 没收到** → 看 §6.3 |
-| `'NavigateToPose' action server not available` | bt_navigator 没起来 → 检查 nav2 是否报错 |
-| `Failed to get a path` | 全局规划失败，目标点可能在障碍上 → 改 `patrol_config.yaml` |
-
-### 6.3 检查 AMCL 是否拿到了初始位姿
-
-```bash
-# 看 AMCL 输出
-ros2 topic echo /amcl_pose --once
-# 看 map → odom 的 TF 是否建立
-ros2 run tf2_ros tf2_echo map odom
-```
-如果两个都没有输出，说明初始位姿压根没设进 AMCL。**临时人工补一下**就能让机器人立刻动起来：
-
-打开 RViz2，点击工具栏 **`2D Pose Estimate`**，在地图上机器人当前位置点一下，拖出朝向，松手。这时 AMCL 会立刻发布 `/amcl_pose`，被卡住的 patrol_node 也会继续往下走。
-
-### 6.4 检查 `/cmd_vel` 是否真的接到 Gazebo 的轮子
-
-```bash
-ros2 topic info /cmd_vel
-ros2 control list_controllers
-```
-期望看到：
-- `/cmd_vel` 有一个 publisher（控制器）和一个 subscriber（gazebo_ros2_control）；
-- `robot_diff_driver_controller [diff_drive_controller/DiffDriveController] active`；
-- `robot_joint_state_broadcaster [joint_state_broadcaster/JointStateBroadcaster] active`。
-
-任何一个不是 `active`，都可能是 `ros-humble-gazebo-ros2-control` 没装，或者 controller_manager 启动失败。重新安装：
-```bash
-sudo apt install ros-humble-gazebo-ros2-control ros-humble-ros2-controllers
-```
-
-可以**手动绕开 Nav2** 验证机器人本体能不能动：
-```bash
-ros2 topic pub --rate 5 /cmd_vel geometry_msgs/msg/Twist '{linear: {x: 0.2}}'
-```
-如果这一步机器人也不动，那问题就是**仿真层**而非导航层，请先解决这一步。
-
-### 6.5 检查时间同步（`use_sim_time`）
-
-Gazebo 启动后所有「认 Gazebo 时间」的节点都需要 `use_sim_time: true`。本项目的 launch 已经默认 `true`，但如果你**单独**起某个节点忘加这个参数，就会出现 TF 时间戳和雷达时间戳错配，Nav2 报 `extrapolation into the future`。
-
-```bash
-ros2 param get /amcl use_sim_time   # 应当是 True
-```
-
-### 6.6 检查初始位姿是否落在地图自由区
-
-`patrol_config.yaml` 默认 `initial_pose: (0,0,0)`。如果你换了世界 / 换了地图，原点可能落在墙里，AMCL 永远收敛不了，全局规划也总是失败。修改：
+`patrol_config.yaml`：
 
 ```yaml
 patrol_node:
@@ -266,203 +199,134 @@ patrol_node:
     initial_pose:
       x: 0.0
       y: 0.0
-      yaw: 0.0
+      yaw: 0.0   # 弧度，需与 Gazebo 中机器人位置一致
 ```
 
-让它和你在 Gazebo 中机器人的真实初始位置对齐。
+### 5.4 改速度
 
----
+编辑 `robot_navigation2/config/nav2_params.yaml` 中 `controller_server` → `FollowPath` 的 `max_vel_x`、`max_vel_theta` 等。修改后重启 launch。
 
-## 7. 自定义：路径点、初始位姿、速度、地图
+### 5.5 改拍照目录
 
-### 7.1 改巡逻点
+编辑 `capture_config.yaml`（不是 `patrol_config.yaml`）：
 
-编辑 `patrol_robot/config/patrol_config.yaml`：
 ```yaml
-patrol_points:
-  - "3.2, -1.0, 0.0"   # x, y, yaw(度)
-  - "4.7, -4.7, 90.0"
-  - "0.0,  0.0, 180.0"
-```
-保存后**重新启动 launch** 即可生效（不需要 `colcon build`，因为 `--symlink-install`）。
-
-### 7.2 改初始位姿
-
-同一个文件中：
-```yaml
-initial_pose:
-  x: 0.0
-  y: 0.0
-  yaw: 0.0   # 弧度
-```
-
-### 7.3 改速度
-
-编辑 `robot_navigation2/config/nav2_params.yaml`，主要看两处：
-- `controller_server.FollowPath.max_vel_x` / `max_speed_xy`（DWB 局部规划器最大线速度）
-- `controller_server.FollowPath.max_vel_theta`（最大角速度）
-
-注意 `robot_diff_driver_controller` 的 `wheel_radius` 与 URDF 一致（0.032 m），如果增大速度建议同时调高 `acc_lim_x`。
-
-### 7.4 改地图 / 世界
-
-- Gazebo 世界：`my_robot_description/world/custom_room.world`
-- 与之配套的占栅地图：`robot_navigation2/maps/room.pgm` + `room.yaml`
-
-注意两者要**对齐**——`room.yaml` 中的 `origin` 是地图左下角在世界坐标系下的坐标。建议建图流程：
-```bash
-# 1. 启动仿真
-ros2 launch my_robot_description gazebo_sim.launch.py
-# 2. 启动 SLAM (可选: slam_toolbox)
-ros2 launch slam_toolbox online_async_launch.py use_sim_time:=true
-# 3. 在另一终端用 teleop 走一圈
-ros2 run teleop_twist_keyboard teleop_twist_keyboard
-# 4. 保存地图
-ros2 run nav2_map_server map_saver_cli -f ~/my_robot_ws/src/robot_navigation2/maps/room
-```
-
-### 7.5 改图片保存目录
-
-最新代码暴露了 `picture_save_dir` 参数，默认 `~/patrol_robot_pictures/`。要改的话编辑 `patrol_config.yaml` 添加：
-```yaml
-patrol_node:
+capture_image_node:
   ros__parameters:
-    picture_save_dir: /tmp/patrol_pic
+    picture_save_dir: "/tmp/patrol_pic"
+    image_topic: "/camera_sensor/image_raw"
+```
+
+### 5.6 远程触发任务（ROS 服务）
+
+```bash
+ros2 service call /submit_patrol_task patrol_interfaces/srv/SubmitPatrolTask \
+  "{task_name: 'inspection_route_A', task_id: 'demo_001'}"
+
+ros2 service call /control_patrol patrol_interfaces/srv/ControlPatrol \
+  "{action: 'pause'}"    # pause | resume | cancel
 ```
 
 ---
 
-## 8. 常用调试命令速查
+## 6. 机器人不动？排查清单
+
+按顺序检查，不要跳步。
+
+1. **是否还在启动** — 等到日志出现 `Nav2 已激活`（冷启动 30~60 秒正常）。
+2. **AMCL 是否有位姿** — `ros2 topic echo /amcl_pose --once` 无输出时，在 RViz 用 **2D Pose Estimate** 点一下机器人位置。
+3. **初始位姿是否在自由区** — 换地图/世界后，调整 `patrol_config.yaml` 的 `initial_pose`。
+4. **`/cmd_vel` 是否进 Gazebo** — `ros2 control list_controllers` 中 `robot_diff_driver_controller` 须为 `active`；可手动验证：
+   ```bash
+   ros2 topic pub --rate 5 /cmd_vel geometry_msgs/msg/Twist '{linear: {x: 0.2}}'
+   ```
+   若这一步仍不动，问题在仿真层（检查 `gazebo-ros2-control` 安装与 URDF 插件）。
+5. **`use_sim_time`** — `ros2 param get /amcl use_sim_time` 应为 `True`（本仓库 launch 默认已设）。
+6. **规划失败** — 日志 `Failed to get a path` 多为目标点在障碍上，改站点坐标或地图。
+
+> 本项目在 `TaskManager.run()` 中已先 `setInitialPose` 再 `waitUntilNav2Active()`。若使用旧 fork 顺序相反，会卡在 `Waiting for amcl_pose`。
+
+---
+
+## 7. 常用调试命令
 
 ```bash
-# 看活着的节点
 ros2 node list
-
-# 看话题、看话题里的数据
 ros2 topic list
 ros2 topic echo /scan --once
-ros2 topic hz   /odom
+ros2 run tf2_ros tf2_echo map base_link
 
-# 看 TF 树
-ros2 run tf2_tools view_frames     # 生成 frames.pdf
-ros2 run tf2_ros  tf2_echo map base_link
-
-# 看 Nav2 lifecycle 状态
 ros2 lifecycle get /amcl
-ros2 lifecycle get /bt_navigator
-
-# 列控制器
 ros2 control list_controllers
-ros2 control list_hardware_interfaces
 
-# 直接给机器人发速度（跳过 Nav2）
-ros2 topic pub --rate 5 /cmd_vel geometry_msgs/msg/Twist '{linear: {x: 0.2}, angular: {z: 0.0}}'
+# 语音 / 拍照服务
+ros2 service call /play_audio_service patrol_interfaces/srv/PlayAudio \
+  "{text_to_speak: '测试语音'}"
+ros2 service call /capture_image_service patrol_interfaces/srv/CaptureImage \
+  "{filename_prefix: 'manual_test'}"
 
-# 调用语音服务测试
-ros2 service call /play_audio_service patrol_interfaces/srv/PlayAudio "{text_to_speak: '你好，我是巡逻机器人'}"
-
-# 调用拍照服务测试（需相机话题在发布）
-ros2 service call /capture_image_service patrol_interfaces/srv/CaptureImage "{filename_prefix: 'manual_test'}"
-
-# 给一个一次性导航目标（绕过 patrol_node）
+# 绕过 patrol，直接 Nav2 导航
 ros2 action send_goal /navigate_to_pose nav2_msgs/action/NavigateToPose \
   "{pose: {header: {frame_id: 'map'}, pose: {position: {x: 1.0, y: 0.0}, orientation: {w: 1.0}}}}"
 ```
 
 ---
 
-## 9. 代码结构导览（哪个文件做什么）
+## 8. 代码结构
 
 ```
-patrol_robot/                       # 应用层
-├── launch/
-│   ├── one_in_all.launch.py        # 顶层一键启动: 仿真 + 导航 + 应用
-│   └── patrol_launch.py            # patrol + audio + capture + gateway
-├── config/
-│   ├── patrol_config.yaml          # 巡逻点 / 初始位姿 / 任务时序参数
-│   └── capture_config.yaml         # 图片保存目录 / 相机话题
-└── patrol_robot/
-    ├── patrol_node.py              # TaskManager 编排入口
-    ├── task_manager.py             # 状态机与巡逻主循环
-    ├── capture_image_node.py       # 拍照服务
-    ├── audio_player_node.py        # 语音服务
-    ├── robot_gateway_node.py       # MQTT 网关
-    ├── gateway/                    # 遥测、MQTT、命令处理
-    └── skills/                     # Navigate / Speak / CaptureImage
-
-patrol_interfaces/
-└── srv/
-    ├── PlayAudio.srv
-    ├── CaptureImage.srv
-    ├── RobotStatus.msg
-    ├── SubmitPatrolTask.srv
-    └── ControlPatrol.srv
-
-my_robot_description/               # 机器人 + 仿真世界
-├── urdf/
-│   ├── robot.urdf.xacro            # 总装文件
-│   ├── parts/                      # 底盘、轮子、相机、激光、IMU
-│   └── plugins/
-│       ├── gazebo_sensor_plugin.xacro       # /scan /imu /camera_sensor/image_raw
-│       └── robbot_ros2_control.xacro        # gazebo_ros2_control 插件
-├── config/robot_ros2_controller.yaml         # 关节状态 + 差速控制器
-├── world/custom_room.world                  # Gazebo 世界
-└── launch/gazebo_sim.launch.py              # 启 Gazebo + spawn_entity + 加载控制器
-
-robot_navigation2/                  # Nav2 配置
-├── launch/navigation2.launch.py    # 包装 nav2_bringup + RViz
-├── config/nav2_params.yaml         # AMCL / DWB / costmap / planner 参数
-└── maps/room.{yaml,pgm}            # 占栅地图
-
-robot_application/                  # 学习用的小工具节点（与一键启动无关）
-└── robot_application/
-    ├── init_robot_pose.py          # 单独发一次初始位姿
-    ├── nav_to_pose.py              # 单点导航示例
-    ├── waypoint_follow.py          # FollowWaypoints 示例
-    └── get_robot_pose.py           # TF 查询当前位姿示例
+ros2_patrol_robot/
+├── my_robot_description/     # URDF、Gazebo 世界、控制器配置
+├── robot_navigation2/        # Nav2 launch、地图、nav2_params.yaml
+├── patrol_interfaces/        # PlayAudio、CaptureImage、RobotStatus、任务服务
+├── patrol_robot/
+│   ├── launch/
+│   │   ├── one_in_all.launch.py   # 仿真 + Nav2 + 应用
+│   │   └── patrol_launch.py       # patrol / audio / capture / gateway
+│   ├── config/                    # patrol、stations、tasks、capture、gateway
+│   └── patrol_robot/
+│       ├── patrol_node.py         # 编排入口、任务服务
+│       ├── task_manager.py        # 状态机、Nav2 初始化、任务循环
+│       ├── orchestrator/          # TaskLoader、TaskOrchestrator、SkillRegistry
+│       ├── skills/                # navigate / speak / capture / detect / report
+│       ├── audio_player_node.py
+│       ├── capture_image_node.py
+│       └── robot_gateway_node.py  # MQTT 网关
+└── robot_application/        # 独立学习示例（不参与 one_in_all）
 ```
 
-阅读建议：
-1. 先看 `one_in_all.launch.py` —— 它把三个子 launch 串起来；
-2. 再看 `gazebo_sim.launch.py` 与 URDF —— 了解仿真侧；
-3. 再看 `navigation2.launch.py` 和 `nav2_params.yaml` —— 了解 Nav2 是如何被「兜底」启动的；
-4. 看 `patrol_node.py` + `task_manager.py` + `skills/` —— 这是 Task/Skill 应用入口；
-5. 详读 [`TASK_SKILL_ARCHITECTURE.md`](TASK_SKILL_ARCHITECTURE.md)。
+阅读顺序建议：`one_in_all.launch.py` → `task_manager.py` → `orchestrator/` → `skills/`。
 
 ---
 
-## 10. IoT 网关与 MQTTX 云边演示
-
-完整说明见 [`ROBOT_GATEWAY_ARCHITECTURE.md`](ROBOT_GATEWAY_ARCHITECTURE.md)。
-
-**快速步骤**：
+## 9. MQTT 云边演示（可选）
 
 1. 安装并启动 Mosquitto：`sudo apt install mosquitto && sudo systemctl start mosquitto`
 2. MQTTX 连接 `127.0.0.1:1883`，订阅 `robots/robot_001/#`
-3. 启动：`ros2 launch patrol_robot one_in_all.launch.py`
-4. 向 Topic `robots/robot_001/command` 发布 `docs/mqtt_demo/start_inspection_A.json` 内容
-5. 观察 `telemetry`、`command/ack`、`events`，以及 Gazebo 中机器人运动
+3. `ros2 launch patrol_robot one_in_all.launch.py`
+4. 向 `robots/robot_001/command` 发布 `docs/mqtt_demo/start_inspection_A.json`
+5. 观察遥测与 Gazebo 中机器人运动
 
-无 Broker 时：`ros2 launch patrol_robot one_in_all.launch.py enable_gateway:=false`
+Broker 配置、JSON 字段、命令表见 [`ROBOT_GATEWAY_ARCHITECTURE.md`](ROBOT_GATEWAY_ARCHITECTURE.md) 与 [`docs/mqtt_demo/README.md`](mqtt_demo/README.md)。
 
 ---
 
-## 11. FAQ
+## 10. FAQ
 
-**Q1：RViz 里机器人模型显示成红色 / 没颜色 / 没模型？**
-A：通常是 `robot_state_publisher` 没拿到 `robot_description`，或者 RViz 的 `Fixed Frame` 不是 `map`。前者重启 launch 即可；后者把 RViz 左上 `Fixed Frame` 改成 `map`。
+**RViz 模型红色或缺失？**  
+检查 `robot_state_publisher` 与 `Fixed Frame` 是否为 `map`。
 
-**Q2：报 `gtts.tts.gTTSError: Failed to connect`？**
-A：gTTS 需要联网，且会被部分网络环境屏蔽。临时关掉播报：在 `task_manager.py` 的 `_run_waypoint_actions` 中注释 `SpeakSkill` 调用；或把 `audio_player_node.py` 换成离线 TTS。
+**gTTS `Failed to connect`？**  
+网络无法访问 Google。任务里对 `speak` 设 `optional: true`，或换离线 TTS。
 
-**Q3：Gazebo 第一次启动特别慢甚至卡死？**
-A：Gazebo Classic 会下载模型缓存。可在启动前预下载 / 使用本地模型库；或在 `~/.gazebo/models` 中提前放好模型。
+**Gazebo 首次极慢？**  
+Classic 会拉取模型；可预置 `~/.gazebo/models`。
 
-**Q4：报 `controller_manager: No msg "load_controller" service`？**
-A：缺 `ros-humble-ros2-control` / `gazebo_ros2_control`，按 §3.2 重装。
+**`controller_manager: No load_controller service`？**  
+按 [3.2](#32-系统依赖) 重装 `ros2-control` 与 `gazebo-ros2-control`。
 
-**Q5：每个目标点之间机器人晃来晃去转圈？**
-A：DWB 的 `RotateToGoal.scale` 偏大，或 `xy_goal_tolerance` 太小，编辑 `nav2_params.yaml` 的 `controller_server.FollowPath` 与 `general_goal_checker` 调一下。
+**到点转圈、晃动？**  
+调 `nav2_params.yaml` 中 `FollowPath` 与 `general_goal_checker` 的容差与 `RotateToGoal` 权重。
 
-**Q6：能在没 GPU 的机器上跑吗？**
-A：可以。Gazebo Classic CPU 渲染没问题，只是帧率较低。如果觉得太慢可以注释掉 `gazebo_sensor_plugin.xacro` 里相机部分或调低 `update_rate`。
+**无 GPU 能跑吗？**  
+可以，Gazebo CPU 渲染帧率较低；可降相机 `update_rate` 减轻负载。

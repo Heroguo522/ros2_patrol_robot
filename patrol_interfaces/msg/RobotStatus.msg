@@ -3,6 +3,9 @@ string task_id
 string state
 uint32 waypoint_index
 uint32 waypoint_total
+uint32 step_index
+uint32 step_total
+string current_step_type
 geometry_msgs/Pose pose
 float32 battery_percent
 string fault_code

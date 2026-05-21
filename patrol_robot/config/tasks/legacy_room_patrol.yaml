@@ -1,0 +1,82 @@
+name: legacy_room_patrol
+task_id: local_patrol
+description: 与旧版 patrol_points 等价的巡逻任务
+on_failure: retry_step
+steps:
+  - type: navigate
+    target: station_1
+  - type: speak
+    text: "已到达目标点，准备拍照"
+    optional: true
+  - type: capture_image
+    save_tag: station_1
+  - type: speak
+    text: "拍照完成"
+    optional: true
+  - type: wait
+    seconds: 3
+  - type: navigate
+    target: station_2
+  - type: speak
+    text: "已到达目标点，准备拍照"
+    optional: true
+  - type: capture_image
+    save_tag: station_2
+  - type: speak
+    text: "拍照完成"
+    optional: true
+  - type: wait
+    seconds: 3
+  - type: navigate
+    target: station_3
+  - type: speak
+    text: "已到达目标点，准备拍照"
+    optional: true
+  - type: capture_image
+    save_tag: station_3
+  - type: speak
+    text: "拍照完成"
+    optional: true
+  - type: wait
+    seconds: 3
+  - type: navigate
+    target: station_4
+  - type: speak
+    text: "已到达目标点，准备拍照"
+    optional: true
+  - type: capture_image
+    save_tag: station_4
+  - type: speak
+    text: "拍照完成"
+    optional: true
+  - type: wait
+    seconds: 3
+  - type: navigate
+    target: station_5
+  - type: speak
+    text: "已到达目标点，准备拍照"
+    optional: true
+  - type: capture_image
+    save_tag: station_5
+  - type: speak
+    text: "拍照完成"
+    optional: true
+  - type: wait
+    seconds: 3
+  - type: navigate
+    target: station_6
+  - type: speak
+    text: "已到达目标点，准备拍照"
+    optional: true
+  - type: capture_image
+    save_tag: station_6
+  - type: speak
+    text: "拍照完成"
+    optional: true
+  - type: wait
+    seconds: 3
+  - type: navigate
+    target: home
+  - type: speak
+    text: "已完成全部巡逻任务"
+    optional: true

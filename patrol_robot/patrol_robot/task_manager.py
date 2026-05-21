@@ -1,25 +1,38 @@
+import math
+import os
 import threading
 import time
 from enum import Enum, auto
+from pathlib import Path
 
 import rclpy
-from geometry_msgs.msg import PoseStamped
+from ament_index_python.packages import get_package_share_directory
 from nav2_simple_commander.robot_navigator import BasicNavigator
 from patrol_interfaces.msg import RobotStatus
 
+from patrol_robot.orchestrator import (
+  ExecutionContext,
+  SkillRegistry,
+  TaskDef,
+  TaskLibrary,
+  TaskLoader,
+  TaskOrchestrator,
+)
 from patrol_robot.skills.base import SkillResult, SkillStatus
 from patrol_robot.skills.capture_image_skill import CaptureImageSkill
+from patrol_robot.skills.detect_anomaly_skill import DetectAnomalySkill
 from patrol_robot.skills.navigate_skill import NavigateSkill
+from patrol_robot.skills.report_skill import ReportSkill
 from patrol_robot.skills.speak_skill import SpeakSkill
-from patrol_robot.utils.pose_utils import parse_patrol_points, parse_waypoint_strings
+from patrol_robot.utils.pose_utils import pose_from_xyyaw
 
 
 class PatrolTaskState(Enum):
   BOOTSTRAP = auto()
   IDLE = auto()
-  PATROLLING = auto()
+  RUNNING = auto()
   NAVIGATING = auto()
-  AT_WAYPOINT = auto()
+  EXECUTING_STEP = auto()
   RETRY_WAIT = auto()
   PAUSED = auto()
   FINISHED = auto()
@@ -28,9 +41,9 @@ class PatrolTaskState(Enum):
 IOT_STATE_MAP = {
   PatrolTaskState.BOOTSTRAP: 'initializing',
   PatrolTaskState.IDLE: 'idle',
-  PatrolTaskState.PATROLLING: 'idle',
+  PatrolTaskState.RUNNING: 'idle',
   PatrolTaskState.NAVIGATING: 'navigating',
-  PatrolTaskState.AT_WAYPOINT: 'at_waypoint',
+  PatrolTaskState.EXECUTING_STEP: 'at_waypoint',
   PatrolTaskState.RETRY_WAIT: 'retry_wait',
   PatrolTaskState.PAUSED: 'paused',
   PatrolTaskState.FINISHED: 'finished',
@@ -44,6 +57,8 @@ class TaskManager:
     navigate_skill: NavigateSkill,
     speak_skill: SpeakSkill,
     capture_skill: CaptureImageSkill,
+    detect_skill: DetectAnomalySkill,
+    report_skill: ReportSkill,
     status_publisher,
     robot_id: str = 'robot_001',
   ):
@@ -51,34 +66,40 @@ class TaskManager:
     self._navigate = navigate_skill
     self._speak = speak_skill
     self._capture = capture_skill
+    self._detect = detect_skill
+    self._report = report_skill
     self._publish_status = status_publisher
     self._robot_id = robot_id
     self._logger = node.get_logger()
     self._lock = threading.Lock()
 
     self._node.declare_parameter('navigate_retry_wait_sec', 60.0)
-    self._node.declare_parameter('waypoint_stabilize_sec', 2.0)
-    self._node.declare_parameter('inter_waypoint_delay_sec', 3.0)
-    self._node.declare_parameter('auto_start_local_patrol', True)
-    self._node.declare_parameter('default_task_id', 'local_patrol')
+    self._node.declare_parameter('task_config_dir', '')
+    self._node.declare_parameter('auto_start_task', True)
+    self._node.declare_parameter('default_task_name', 'legacy_room_patrol')
 
     self._retry_wait_sec = self._node.get_parameter('navigate_retry_wait_sec').value
-    self._stabilize_sec = self._node.get_parameter('waypoint_stabilize_sec').value
-    self._inter_delay_sec = self._node.get_parameter('inter_waypoint_delay_sec').value
-    self._auto_start = self._node.get_parameter('auto_start_local_patrol').value
+    self._auto_start = self._node.get_parameter('auto_start_task').value
 
-    self._patrol_points: list[PoseStamped] = []
+    self._library: TaskLibrary | None = None
+    self._registry: SkillRegistry | None = None
+    self._current_task: TaskDef | None = None
     self._point_index = 0
+    self._step_index = 0
+    self._step_total = 0
+    self._current_step_type = ''
+    self._current_station = ''
     self._state = PatrolTaskState.BOOTSTRAP
-    self._task_id = self._node.get_parameter('default_task_id').value
+    self._task_id = ''
     self._paused = False
     self._cancel_requested = False
     self._fault_code = ''
     self._patrol_active = False
     self._pending_start = False
-    self._pending_waypoints: list[str] | None = None
+    self._pending_task_name: str | None = None
     self._pending_task_id: str | None = None
-    self._pending_initial_pose: tuple[float, float, float] | None = None
+    self._orchestrator = TaskOrchestrator(
+      self._logger, status_callback=self._on_step_status)
 
   @property
   def iot_state(self) -> str:
@@ -98,11 +119,42 @@ class TaskManager:
       msg.task_id = self._task_id
       msg.state = self.iot_state
       msg.waypoint_index = self._point_index
-      msg.waypoint_total = len(self._patrol_points)
+      msg.waypoint_total = self._step_total
+      msg.step_index = self._step_index
+      msg.step_total = self._step_total
+      msg.current_step_type = self._current_step_type
       msg.fault_code = self._fault_code
       msg.battery_percent = 0.0
       msg.stamp = self._node.get_clock().now().to_msg()
     self._publish_status(msg)
+
+  def _resolve_task_dir(self) -> str:
+    configured = str(self._node.get_parameter('task_config_dir').value).strip()
+    if configured:
+      return configured
+    try:
+      share = get_package_share_directory('patrol_robot')
+      return os.path.join(share, 'config')
+    except Exception:
+      source_fallback = Path(__file__).resolve().parents[1] / 'config'
+      return str(source_fallback)
+
+  def _load_library(self) -> TaskLibrary:
+    loader = TaskLoader(self._logger)
+    base_dir = self._resolve_task_dir()
+    library = loader.load_library(base_dir)
+    self._logger.info(f'DSL 配置目录: {base_dir}')
+    return library
+
+  def _build_registry(self, library: TaskLibrary) -> SkillRegistry:
+    registry = SkillRegistry(library.stations)
+    registry.register('navigate', self._run_navigate_step)
+    registry.register('speak', self._run_speak_step)
+    registry.register('capture_image', self._run_capture_step)
+    registry.register('wait', self._run_wait_step)
+    registry.register('detect_anomaly', self._run_detect_step)
+    registry.register('report', self._run_report_step)
+    return registry
 
   def _init_robot_pose(
     self,
@@ -113,42 +165,105 @@ class TaskManager:
     init_x = x if x is not None else self._node.get_parameter('initial_pose.x').value
     init_y = y if y is not None else self._node.get_parameter('initial_pose.y').value
     init_yaw = yaw if yaw is not None else self._node.get_parameter('initial_pose.yaw').value
-    from patrol_robot.utils.pose_utils import pose_from_xyyaw
     initial_pose = pose_from_xyyaw(self._node, init_x, init_y, init_yaw)
     self._node.setInitialPose(initial_pose)
     self._logger.info(f'初始位姿: x={init_x}, y={init_y}, yaw={init_yaw}')
 
-  def load_patrol_route(self, waypoints: list[str] | None = None) -> bool:
-    if waypoints is not None:
-      self._patrol_points = parse_waypoint_strings(
-        self._node, self._logger, waypoints)
+  def _on_step_status(self, ctx: ExecutionContext) -> None:
+    self._step_index = ctx.step_index
+    self._step_total = ctx.step_total
+    self._current_step_type = ctx.current_step_type
+    self._current_station = ctx.current_station or ''
+    if ctx.current_step_type == 'navigate':
+      self._set_state(PatrolTaskState.NAVIGATING)
+      self._point_index = min(ctx.step_index, max(ctx.step_total - 1, 0))
     else:
-      self._patrol_points = parse_patrol_points(self._node, self._logger)
-    self._point_index = 0
-    self._emit_status()
-    return len(self._patrol_points) > 0
+      self._set_state(PatrolTaskState.EXECUTING_STEP)
 
-  def submit_patrol_task(
+  def _run_navigate_step(self, step, ctx: ExecutionContext) -> SkillResult:
+    if self._registry is None:
+      return SkillResult(SkillStatus.FAILED, 'registry 未初始化')
+    target = str(step.params.get('target', '')).strip()
+    if not target:
+      return SkillResult(SkillStatus.FAILED, 'navigate 缺少 target')
+    station = self._registry.station(target)
+    ctx.current_station = target
+    target_pose = pose_from_xyyaw(
+      self._node,
+      station.x,
+      station.y,
+      math.radians(station.yaw_deg),
+    )
+    result = self._navigate.execute(target_pose=target_pose)
+    if result.status == SkillStatus.SUCCEEDED:
+      return result
+    self._fault_code = 'NAV_FAILED'
+    self._set_state(PatrolTaskState.RETRY_WAIT)
+    self._logger.warn(
+      f'导航失败, {self._retry_wait_sec:.0f}s 后重试步骤: {target}')
+    time.sleep(self._retry_wait_sec)
+    return self._navigate.execute(target_pose=target_pose)
+
+  def _run_speak_step(self, step, ctx: ExecutionContext) -> SkillResult:
+    text = str(step.params.get('text', '')).strip()
+    if not text:
+      return SkillResult(SkillStatus.FAILED, 'speak 缺少 text')
+    return self._speak.execute(text=text)
+
+  def _run_capture_step(self, step, ctx: ExecutionContext) -> SkillResult:
+    save_tag = str(step.params.get('save_tag', 'patrol_image')).strip()
+    result = self._capture.execute(filename_prefix=save_tag or 'patrol_image')
+    if result.succeeded:
+      ctx.last_image_path = result.message
+    return result
+
+  def _run_wait_step(self, step, ctx: ExecutionContext) -> SkillResult:
+    try:
+      seconds = float(step.params.get('seconds', 1.0))
+    except (TypeError, ValueError):
+      return SkillResult(SkillStatus.FAILED, 'wait seconds 非法')
+    wait_ms = max(0.0, seconds)
+    start = time.monotonic()
+    while (time.monotonic() - start) < wait_ms:
+      if self._cancel_requested:
+        return SkillResult(SkillStatus.CANCELED, '任务已取消')
+      while self._paused and not self._cancel_requested:
+        time.sleep(0.2)
+      time.sleep(0.1)
+    return SkillResult(SkillStatus.SUCCEEDED, f'wait {wait_ms:.1f}s')
+
+  def _run_detect_step(self, step, ctx: ExecutionContext) -> SkillResult:
+    model = str(step.params.get('model', 'mock_detector')).strip()
+    result = self._detect.execute(model=model, context=ctx)
+    if not result.succeeded:
+      self._fault_code = 'NO_IMAGE'
+    return result
+
+  def _run_report_step(self, step, ctx: ExecutionContext) -> SkillResult:
+    channel = str(step.params.get('channel', 'log')).strip()
+    return self._report.execute(channel=channel, context=ctx)
+
+  def submit_task(
     self,
+    task_name: str,
     task_id: str,
-    waypoints: list[str],
-    initial_pose: tuple[float, float, float] | None = None,
   ) -> tuple[bool, str]:
-    if not waypoints:
-      return False, 'waypoints 不能为空'
+    if not task_name:
+      return False, 'task_name 不能为空'
     with self._lock:
       self._pending_start = True
-      self._pending_waypoints = list(waypoints)
+      self._pending_task_name = task_name
       self._pending_task_id = task_id
-      self._pending_initial_pose = initial_pose
       self._cancel_requested = True
-    return True, '任务已排队, 将尽快启动'
+      self._orchestrator.cancel()
+    return True, f'任务 {task_name} 已排队'
 
   def control_patrol(self, action: int) -> tuple[bool, str]:
     from patrol_interfaces.srv import ControlPatrol
     if action == ControlPatrol.Request.PAUSE:
       with self._lock:
         self._paused = True
+        self._orchestrator.set_paused(True)
       self._set_state(PatrolTaskState.PAUSED)
       return True, '巡逻已暂停'
     if action == ControlPatrol.Request.RESUME:
@@ -156,150 +271,98 @@ class TaskManager:
         if not self._patrol_active:
           return False, '当前无进行中的巡逻'
         self._paused = False
-      self._set_state(PatrolTaskState.PATROLLING)
+        self._orchestrator.set_paused(False)
+      self._set_state(PatrolTaskState.RUNNING)
       return True, '巡逻已恢复'
     if action == ControlPatrol.Request.CANCEL:
       with self._lock:
         self._cancel_requested = True
         self._patrol_active = False
+        self._orchestrator.cancel()
       self._navigate.cancel()
       self._fault_code = ''
       self._set_state(PatrolTaskState.IDLE)
       return True, '巡逻已取消'
     return False, f'未知 action: {action}'
 
-  def _apply_pending_task(self) -> bool:
+  def _apply_pending_task(self) -> tuple[bool, str]:
     with self._lock:
-      if not self._pending_start or not self._pending_waypoints:
-        return False
-      waypoints = self._pending_waypoints
-      task_id = self._pending_task_id or self._task_id
-      initial_pose = self._pending_initial_pose
+      if not self._pending_start or not self._pending_task_name:
+        return False, ''
+      task_name = self._pending_task_name
+      task_id = self._pending_task_id or task_name
       self._pending_start = False
-      self._pending_waypoints = None
+      self._pending_task_name = None
       self._pending_task_id = None
-      self._pending_initial_pose = None
       self._cancel_requested = False
       self._paused = False
       self._fault_code = ''
-
-    self._task_id = task_id
-    if initial_pose is not None:
-      self._init_robot_pose(*initial_pose)
-    if not self.load_patrol_route(waypoints):
-      return False
-    self._patrol_active = True
-    self._logger.info(f'远程任务已加载: {task_id}, 共 {len(self._patrol_points)} 个点')
-    return True
-
-  def _run_speak(self, text: str) -> SkillResult:
-    result = self._speak.execute(text=text)
-    if not result.succeeded:
-      self._logger.warn(f'语音技能未成功: {result.message}')
-    return result
-
-  def _run_waypoint_actions(self) -> None:
-    if self._check_cancel_or_pause():
-      return
-    self._logger.info('导航成功, 执行到点动作链')
-    self._run_speak('已到达目标点, 准备拍照')
-    if self._check_cancel_or_pause():
-      return
-    time.sleep(self._stabilize_sec)
-    capture_result = self._capture.execute()
-    if not capture_result.succeeded:
-      self._fault_code = 'CAPTURE_FAILED'
-      self._emit_status()
-      self._logger.warn(f'拍照未成功: {capture_result.message}')
-    time.sleep(1.0)
-    self._run_speak('拍照完成')
-
-  def _check_cancel_or_pause(self) -> bool:
-    with self._lock:
-      if self._cancel_requested:
-        return True
-    while True:
-      with self._lock:
-        if self._cancel_requested:
-          return True
-        if not self._paused:
-          return False
-      time.sleep(0.2)
+      self._orchestrator.reset()
+    self._set_state(PatrolTaskState.RUNNING)
+    return True, f'{task_name}:{task_id}'
 
   def _patrol_loop(self) -> None:
     while rclpy.ok():
-      if self._apply_pending_task():
-        self._run_speak('巡逻任务开始')
+      started, task_ref = self._apply_pending_task()
+      if started:
+        task_name, task_id = task_ref.split(':', 1)
+        if self._library is None or self._registry is None:
+          self._logger.error('Task library 未初始化')
+          self._set_state(PatrolTaskState.IDLE)
+          continue
+        task = self._library.tasks.get(task_name)
+        if task is None:
+          self._logger.error(f'未找到任务: {task_name}')
+          self._set_state(PatrolTaskState.IDLE)
+          continue
+        self._current_task = task
+        self._task_id = task_id
+        ctx = ExecutionContext(task_id=task_id, task_name=task.name)
+        ok, message = self._orchestrator.run_task(task, self._registry, ctx)
+        if ok:
+          self._fault_code = ''
+          self._set_state(PatrolTaskState.FINISHED)
+          self._logger.info(f'任务完成: {task_name}')
+        else:
+          if '任务已取消' in message:
+            self._set_state(PatrolTaskState.IDLE)
+          else:
+            self._fault_code = self._fault_code or 'TASK_FAILED'
+            self._set_state(PatrolTaskState.RETRY_WAIT)
+          self._logger.warn(message)
+        with self._lock:
+          self._patrol_active = False
+          self._paused = False
+          self._cancel_requested = False
+          self._orchestrator.reset()
+        continue
 
       with self._lock:
         active = self._patrol_active
-        state = self._state
-
-      if not active or state == PatrolTaskState.FINISHED:
-        if state == PatrolTaskState.FINISHED:
-          break
+      if not active:
         time.sleep(0.2)
         continue
-
-      if self._check_cancel_or_pause():
-        with self._lock:
-          if self._cancel_requested:
-            self._patrol_active = False
-            self._set_state(PatrolTaskState.IDLE)
-            continue
-
-      if not self._patrol_points:
-        time.sleep(0.2)
-        continue
-
-      target = self._patrol_points[self._point_index]
-      total = len(self._patrol_points)
-      self._logger.info(f'--- 前往巡逻点 {self._point_index + 1}/{total} ---')
-
-      self._set_state(PatrolTaskState.NAVIGATING)
-      nav_result = self._navigate.execute(target_pose=target)
-
-      if self._check_cancel_or_pause():
-        continue
-
-      if nav_result.status == SkillStatus.SUCCEEDED:
-        self._set_state(PatrolTaskState.AT_WAYPOINT)
-        self._fault_code = ''
-        self._run_waypoint_actions()
-      else:
-        self._fault_code = 'NAV_FAILED'
-        self._set_state(PatrolTaskState.RETRY_WAIT)
-        self._run_speak('导航失败, 请检查环境或地图, 将在一分钟后重试')
-        self._logger.warn(
-          f'导航失败, 等待 {self._retry_wait_sec:.0f} 秒后重试当前点...')
-        time.sleep(self._retry_wait_sec)
-        continue
-
-      self._point_index = (self._point_index + 1) % total
-      self._set_state(PatrolTaskState.PATROLLING)
-
-      if total > 1:
-        self._run_speak('三秒后前往下一个目标点')
-        time.sleep(self._inter_delay_sec)
-      else:
-        self._logger.info('已完成单点巡逻, 任务结束')
-        self._patrol_active = False
-        self._set_state(PatrolTaskState.FINISHED)
-        break
+      time.sleep(0.1)
 
   def run(self) -> None:
     self._set_state(PatrolTaskState.BOOTSTRAP)
+    self._library = self._load_library()
+    self._registry = self._build_registry(self._library)
     self._init_robot_pose()
     time.sleep(1.0)
     self._node.waitUntilNav2Active()
     self._logger.info('Nav2 已激活')
     self._set_state(PatrolTaskState.IDLE)
 
-    if self._auto_start and self.load_patrol_route():
+    default_task_name = self._node.get_parameter('default_task_name').value
+    if self._auto_start and default_task_name:
       with self._lock:
         self._patrol_active = True
-      self._logger.info('auto_start_local_patrol: 使用 YAML 路点启动')
+        self._pending_start = True
+        self._pending_task_name = default_task_name
+        self._pending_task_id = ''
+      self._logger.info(f'auto_start_task: {default_task_name}')
     else:
-      self._logger.info('等待远程任务 (submit_patrol_task 或 MQTT)')
+      self._logger.info('等待远程任务 (submit_patrol_task/start_task)')
 
     self._patrol_loop()

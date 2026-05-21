@@ -1,0 +1,9 @@
+string task_id
+string task_name
+string step_type
+string station
+string image_path
+bool anomaly
+float32 anomaly_score
+string payload_json
+builtin_interfaces/Time stamp

@@ -1,0 +1,29 @@
+stations:
+  station_1:
+    x: 3.2
+    y: -1.0
+    yaw_deg: 0.0
+  station_2:
+    x: 4.7
+    y: -4.7
+    yaw_deg: 0.0
+  station_3:
+    x: 3.6
+    y: 2.8
+    yaw_deg: 0.0
+  station_4:
+    x: -2.4
+    y: -3.0
+    yaw_deg: 0.0
+  station_5:
+    x: -7.7
+    y: -4.8
+    yaw_deg: 0.0
+  station_6:
+    x: -6.7
+    y: 1.9
+    yaw_deg: 0.0
+  home:
+    x: 0.0
+    y: 0.0
+    yaw_deg: 0.0

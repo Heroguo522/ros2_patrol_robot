@@ -1,8 +1,9 @@
 patrol_node:
   ros__parameters:
     robot_id: "robot_001"
-    auto_start_local_patrol: true
-    default_task_id: "local_patrol"
+    task_config_dir: ""
+    auto_start_task: true
+    default_task_name: "legacy_room_patrol"
 
     # 机器人初始位姿 (x, y, yaw in radians)
     initial_pose:
@@ -11,17 +12,3 @@ patrol_node:
       yaw: 0.0
 
     navigate_retry_wait_sec: 60.0
-    waypoint_stabilize_sec: 2.0
-    inter_waypoint_delay_sec: 3.0
-
-    # 巡逻点列表
-    # 格式: ["x,y,yaw_in_degrees", "x,y,yaw_in_degrees", ...]
-    patrol_points: [
-      "3.2, -1.0, 0.0",   # 目标点1
-      "4.7, -4.7, 0.0",   # 目标点2
-      "3.6, 2.8, 0.0",   # 目标点3
-      "-2.4, -3.0, 0.0",     # 目标点4 
-      "-7.7, -4.8, 0.0",      # 目标点5
-      "-6.7, 1.9, 0.0",      # 目标点6 
-      "0.0, 0.0, 0.0"      # 目标点7（返回原点） 
-    ]

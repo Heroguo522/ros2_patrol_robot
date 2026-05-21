@@ -1,9 +1,5 @@
+string task_name
 string task_id
-string[] waypoints
-bool use_initial_pose
-float64 initial_pose_x
-float64 initial_pose_y
-float64 initial_pose_yaw
 ---
 bool success
 string message

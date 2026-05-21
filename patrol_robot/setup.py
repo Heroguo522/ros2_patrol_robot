@@ -5,6 +5,7 @@ package_name = 'patrol_robot'
 _pkg_root = os.path.dirname(os.path.dirname(__file__))
 _mqtt_demo_files = glob(
   os.path.join(_pkg_root, 'docs', 'mqtt_demo', '*.json'))
+_task_yaml_files = glob(os.path.join('config', 'tasks', '*.yaml'))
 
 setup(
     name=package_name,
@@ -19,9 +20,10 @@ setup(
         (os.path.join('share', package_name, 'launch'), glob('launch/*.py')),
         
         (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
+        (os.path.join('share', package_name, 'config', 'tasks'), _task_yaml_files),
         (os.path.join('share', package_name, 'mqtt_demo'), _mqtt_demo_files),
     ],
-    install_requires=['setuptools'],
+    install_requires=['setuptools', 'PyYAML'],
     zip_safe=True,
     maintainer='nanimi',
     maintainer_email='nanimi@todo.todo',

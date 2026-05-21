@@ -10,7 +10,8 @@ from patrol_robot.gateway.schema import build_ack, build_event
 
 class CommandHandler:
   VALID_ACTIONS = {
-    'start_patrol', 'update_patrol', 'pause_patrol', 'resume_patrol', 'cancel_patrol',
+    'start_task', 'start_patrol', 'update_patrol',
+    'pause_patrol', 'resume_patrol', 'cancel_patrol',
   }
 
   def __init__(self, node: Node, robot_id: str, on_event=None):
@@ -51,10 +52,10 @@ class CommandHandler:
       ok, msg = self._call_control(ControlPatrol.Request.PAUSE)
     elif action == 'resume_patrol':
       ok, msg = self._call_control(ControlPatrol.Request.RESUME)
-    elif action in ('start_patrol', 'update_patrol'):
-      if action == 'update_patrol':
+    elif action in ('start_task', 'start_patrol', 'update_patrol'):
+      if action in ('update_patrol', 'start_task'):
         self._call_control(ControlPatrol.Request.CANCEL)
-      ok, msg = self._call_submit(data)
+      ok, msg = self._call_submit_task(data)
     else:
       ok, msg = False, 'unsupported'
 
@@ -72,22 +73,18 @@ class CommandHandler:
       with self._lock:
         self._seen_commands[command_id] = ack
 
-  def _call_submit(self, data: dict) -> tuple[bool, str]:
+  def _call_submit_task(self, data: dict) -> tuple[bool, str]:
     if not self._submit_client.service_is_ready():
       return False, 'submit_patrol_task 不可用'
     req = SubmitPatrolTask.Request()
-    req.task_id = data.get('task_id', 'remote_task')
-    req.waypoints = list(data.get('waypoints', []))
-    if not req.waypoints:
-      return False, 'waypoints 不能为空'
-    ip = data.get('initial_pose')
-    if ip is not None:
-      req.use_initial_pose = True
-      req.initial_pose_x = float(ip.get('x', 0.0))
-      req.initial_pose_y = float(ip.get('y', 0.0))
-      req.initial_pose_yaw = float(ip.get('yaw', 0.0))
-    else:
-      req.use_initial_pose = False
+    task_name = str(data.get('task_name', '')).strip()
+    if not task_name:
+      legacy_waypoints = list(data.get('waypoints', []))
+      if legacy_waypoints:
+        return False, 'DSL 模式不支持 waypoints，请使用 action=start_task + task_name'
+      return False, '缺少 task_name'
+    req.task_name = task_name
+    req.task_id = str(data.get('task_id', task_name)).strip() or task_name
     future = self._submit_client.call_async(req)
     rclpy.spin_until_future_complete(self._node, future, timeout_sec=15.0)
     if not future.done():

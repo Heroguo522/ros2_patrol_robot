@@ -17,13 +17,18 @@ def build_telemetry(
   state: str,
   waypoint_index: int,
   waypoint_total: int,
+  step_index: int,
+  step_total: int,
+  current_step_type: str,
   pose: dict[str, float] | None,
   battery: float,
   fault_code: str | None,
 ) -> str:
-  total = max(waypoint_total, 1)
-  idx = min(waypoint_index, total - 1) if waypoint_total else 0
-  label = f'{idx + 1}/{waypoint_total}' if waypoint_total else '0/0'
+  waypoint_count = max(waypoint_total, 0)
+  waypoint_label = (
+    f'{waypoint_index + 1}/{waypoint_total}' if waypoint_count else '0/0')
+  step_count = max(step_total, 0)
+  step_label = f'{step_index + 1}/{step_total}' if step_count else '0/0'
   payload = {
     'robot_id': robot_id,
     'task_id': task_id,
@@ -31,7 +36,11 @@ def build_telemetry(
     'progress': {
       'waypoint_index': waypoint_index,
       'waypoint_total': waypoint_total,
-      'waypoint_label': label,
+      'waypoint_label': waypoint_label,
+      'step_index': step_index,
+      'step_total': step_total,
+      'step_label': step_label,
+      'current_step_type': current_step_type,
     },
     'pose': pose or {'x': 0.0, 'y': 0.0, 'yaw': 0.0},
     'battery': round(battery, 1),
@@ -86,3 +95,13 @@ def build_online(robot_id: str, online: bool) -> str:
     'online': online,
     'timestamp': utc_now_iso(),
   })
+
+
+def build_task_report_event(robot_id: str, payload_json: str) -> str:
+  payload = {
+    'robot_id': robot_id,
+    'event_type': 'task_report',
+    'payload_json': payload_json,
+    'timestamp': utc_now_iso(),
+  }
+  return dumps_compact(payload)

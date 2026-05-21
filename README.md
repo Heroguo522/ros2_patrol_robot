@@ -21,6 +21,7 @@
 *   **模块化接口**:
     *   `patrol_interfaces`: 定义 `PlayAudio.srv`、`CaptureImage.srv`，实现应用与能力节点解耦。
 *   **架构文档**: [`docs/TASK_SKILL_ARCHITECTURE.md`](docs/TASK_SKILL_ARCHITECTURE.md)
+*   **任务 DSL**: [`docs/TASK_DSL_ARCHITECTURE.md`](docs/TASK_DSL_ARCHITECTURE.md)（`stations.yaml` + `tasks/*.yaml`）
 *   **IoT 网关**: `robot_gateway_node` — MQTT 遥测上报与远程巡逻任务（MQTTX 演示见 [`docs/ROBOT_GATEWAY_ARCHITECTURE.md`](docs/ROBOT_GATEWAY_ARCHITECTURE.md)）
 *   **一键启动**: 提供了一个顶层的 `launch` 文件，能够一键启动包括 Gazebo 仿真、Nav2 导航以及所有自定义应用节点在内的完整系统。
 
@@ -30,7 +31,7 @@
 *   **仿真器**: Gazebo
 *   **导航**: Nav2 Stack
 *   **核心语言**: Python
-*   **主要依赖库**: `nav2_simple_commander`, `gTTS`, `pygame`, `opencv-python`, `tf_transformations`
+*   **主要依赖库**: `nav2_simple_commander`, `gTTS`, `pygame`, `opencv-python`, `tf_transformations`, `PyYAML`
 
 ## 2. 使用方法
 
@@ -86,14 +87,16 @@
     *   启动 `patrol_node`、`audio_player_node`、`capture_image_node`、`robot_gateway_node`（需本机 Mosquitto，见网关文档）。
 
 3.  **观察机器人**:
-    启动后，机器人会自动进行初始化，然后开始依次导航到 `patrol_config.yaml` 中的路径点。到达每个点后会有语音播报，照片保存在 `capture_config.yaml` 的 `picture_save_dir`（默认 `~/patrol_images`）。
+    启动后，机器人会按 `stations.yaml` + `tasks/*.yaml` 的任务步骤执行（默认任务 `legacy_room_patrol`）。照片保存在 `capture_config.yaml` 的 `picture_save_dir`（默认 `~/patrol_images`）。
 
-> 如果启动后机器人不动, 请参阅 [`docs/MANUAL.md` 第 6 节](docs/MANUAL.md#6-gazebo--rviz-中机器人不动逐步排查) 的排查指南。
+> 如果启动后机器人不动, 请参阅 [`docs/MANUAL.md` 排查清单](docs/MANUAL.md#6-机器人不动排查清单)。
 
-### 2.3 自定义巡逻路径和速度
+### 2.3 自定义任务和速度
 
-*   **修改巡逻点**:
-    编辑 `patrol_robot/config/patrol_config.yaml` 文件，修改 `patrol_points` 列表即可自定义巡逻路径。格式为 `"x,y,yaw_in_degrees"`。
+*   **修改任务 DSL**:
+    - 编辑 `patrol_robot/config/stations.yaml` 定义站点；
+    - 编辑 `patrol_robot/config/tasks/*.yaml` 定义任务步骤；
+    - 详情见 [`docs/TASK_DSL_ARCHITECTURE.md`](docs/TASK_DSL_ARCHITECTURE.md)。
 
 *   **调整机器人速度**:
     编辑 `robot_navigation2/config/nav2_params.yaml` 文件。您可以修改 `controller_server` 下 `FollowPath` 部分的 `max_speed_xy` 和 `velocity_smoother` 下的 `max_velocity` 参数来调整机器人的最大行驶速度。修改后需要重启 `launch` 文件才能生效。

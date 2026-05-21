@@ -2,13 +2,19 @@
 # -*- coding: utf-8 -*-
 
 import rclpy
+from patrol_interfaces.msg import TaskReport
 from rclpy.node import Node
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 
 from patrol_robot.gateway.command_handler import CommandHandler
 from patrol_robot.gateway.mqtt_transport import MqttTransport
-from patrol_robot.gateway.schema import build_event, build_online, build_telemetry
+from patrol_robot.gateway.schema import (
+  build_event,
+  build_online,
+  build_task_report_event,
+  build_telemetry,
+)
 from patrol_robot.gateway.telemetry_aggregator import TelemetryAggregator
 
 
@@ -37,6 +43,8 @@ class RobotGatewayNode(Node):
     self._tf_buffer = Buffer()
     self._tf_listener = TransformListener(self._tf_buffer, self)
     self._aggregator = TelemetryAggregator(self, self._tf_buffer)
+    self.create_subscription(
+      TaskReport, '/robot/task_report', self._task_report_callback, 10)
 
     self._mqtt: MqttTransport | None = None
     if self.get_parameter('enable_mqtt').value:
@@ -72,6 +80,12 @@ class RobotGatewayNode(Node):
     if self._mqtt:
       self._mqtt.publish_event(payload)
 
+  def _task_report_callback(self, msg: TaskReport) -> None:
+    if not self._mqtt:
+      return
+    self._mqtt.publish_event(
+      build_task_report_event(self._robot_id, msg.payload_json))
+
   def _publish_telemetry(self) -> None:
     snap = self._aggregator.snapshot()
     state = snap['state']
@@ -81,6 +95,9 @@ class RobotGatewayNode(Node):
       state=state,
       waypoint_index=snap['waypoint_index'],
       waypoint_total=snap['waypoint_total'],
+      step_index=snap['step_index'],
+      step_total=snap['step_total'],
+      current_step_type=snap['current_step_type'],
       pose=snap['pose'],
       battery=snap['battery'],
       fault_code=snap['fault_code'],

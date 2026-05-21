@@ -1,0 +1,6 @@
+{
+  "command_id": "demo-legacy-001",
+  "action": "start_task",
+  "task_name": "legacy_room_patrol",
+  "task_id": "local_patrol"
+}
