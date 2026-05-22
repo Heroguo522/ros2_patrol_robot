@@ -13,9 +13,13 @@ class DetectAnomalySkill(Skill):
     **kwargs,
   ) -> SkillResult:
     if context is None:
-      return SkillResult(SkillStatus.FAILED, '缺少 ExecutionContext')
+      return SkillResult(SkillStatus.FAILED, '缺少 ExecutionContext', fault_code='STEP_EXCEPTION')
     if not context.last_image_path:
-      return SkillResult(SkillStatus.FAILED, 'NO_IMAGE')
+      return SkillResult(
+        SkillStatus.FAILED,
+        '缺少图像输入',
+        fault_code='CAMERA_NO_IMAGE',
+      )
 
     result = {
       'is_anomaly': False,

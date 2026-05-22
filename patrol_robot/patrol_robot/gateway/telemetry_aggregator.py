@@ -82,15 +82,10 @@ class TelemetryAggregator:
         'fault_code': 'OFFLINE' if stale and status else None,
       }
 
-    fault = status.fault_code if status.fault_code else None
-    state = status.state
-    if fault and state != 'fault':
-      state = 'fault'
-
     return {
       'robot_id': status.robot_id or self._robot_id,
       'task_id': status.task_id,
-      'state': state,
+      'state': status.state,
       'waypoint_index': status.waypoint_index,
       'waypoint_total': status.waypoint_total,
       'step_index': status.step_index,
@@ -98,5 +93,5 @@ class TelemetryAggregator:
       'current_step_type': status.current_step_type,
       'pose': pose,
       'battery': battery if battery > 0 else status.battery_percent,
-      'fault_code': fault,
+      'fault_code': status.fault_code if status.fault_code else None,
     }

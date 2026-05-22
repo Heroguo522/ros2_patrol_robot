@@ -11,4 +11,22 @@ patrol_node:
       y: 0.0
       yaw: 0.0
 
-    navigate_retry_wait_sec: 60.0
+    task_completion_hold_sec: 5.0
+
+    fault_recovery:
+      nav_retry_max_attempts: 3
+      nav_retry_initial_wait_sec: 3.0
+      nav_retry_backoff_factor: 2.0
+      nav_timeout_sec: 120.0
+      nav_clear_costmap_on_retry: true
+
+      service_wait_timeout_sec: 2.0
+
+      capture_retry_max_attempts: 1
+      capture_retry_wait_sec: 2.0
+      capture_failure_blocks_task_default: false
+
+      camera_no_image_blocks_task_default: false
+      image_stale_timeout_sec: 5.0
+
+      tts_failure_blocks_task: false

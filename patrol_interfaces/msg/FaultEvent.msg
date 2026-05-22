@@ -1,0 +1,17 @@
+string robot_id
+string task_id
+string task_name
+string event_type
+string fault_code
+string fault_category
+string severity
+string recovery_action
+uint32 attempt
+uint32 max_attempts
+string step_type
+uint32 step_index
+uint32 step_total
+string station
+string message
+string details_json
+builtin_interfaces/Time stamp
