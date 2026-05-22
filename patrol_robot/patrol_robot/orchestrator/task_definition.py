@@ -14,6 +14,7 @@ class StepDef:
   type: str
   params: dict[str, object] = field(default_factory=dict)
   optional: bool = False
+  required: bool = False
 
 
 @dataclass

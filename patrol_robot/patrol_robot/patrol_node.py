@@ -5,7 +5,7 @@ import threading
 
 import rclpy
 from nav2_simple_commander.robot_navigator import BasicNavigator
-from patrol_interfaces.msg import RobotStatus
+from patrol_interfaces.msg import FaultEvent, RobotStatus
 from patrol_interfaces.srv import ControlPatrol, SubmitPatrolTask
 from rclpy.executors import MultiThreadedExecutor
 from tf2_ros.buffer import Buffer
@@ -36,6 +36,7 @@ class PatrolNode(BasicNavigator):
     self.declare_parameter('initial_pose.yaw', 0.0)
 
     self._status_pub = self.create_publisher(RobotStatus, '/robot/status', 10)
+    self._fault_event_pub = self.create_publisher(FaultEvent, '/robot/fault_event', 10)
 
     navigate_skill = NavigateSkill(self, self, self.tf_buffer)
     speak_skill = SpeakSkill(self)
@@ -50,6 +51,7 @@ class PatrolNode(BasicNavigator):
       detect_skill,
       report_skill,
       status_publisher=self._publish_robot_status,
+      fault_event_publisher=self._publish_fault_event,
       robot_id=self.robot_id,
     )
 
@@ -62,6 +64,9 @@ class PatrolNode(BasicNavigator):
 
   def _publish_robot_status(self, msg: RobotStatus) -> None:
     self._status_pub.publish(msg)
+
+  def _publish_fault_event(self, msg: FaultEvent) -> None:
+    self._fault_event_pub.publish(msg)
 
   def _handle_submit_patrol_task(self, request, response):
     ok, message = self.task_manager.submit_task(

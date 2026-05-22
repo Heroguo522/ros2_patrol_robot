@@ -21,11 +21,13 @@ class CaptureImageNode(Node):
 
     self.declare_parameter('picture_save_dir', os.path.expanduser('~/patrol_images'))
     self.declare_parameter('image_topic', '/camera_sensor/image_raw')
+    self.declare_parameter('fault_recovery.image_stale_timeout_sec', 5.0)
 
     self._save_dir = self.get_parameter('picture_save_dir').value
     image_topic = self.get_parameter('image_topic').value
 
     self._latest_image = None
+    self._last_frame_time = 0.0
     self._image_lock = threading.Lock()
     self._bridge = CvBridge()
 
@@ -40,6 +42,7 @@ class CaptureImageNode(Node):
   def _image_callback(self, msg: Image):
     with self._image_lock:
       self._latest_image = msg
+      self._last_frame_time = time.monotonic()
 
   def _handle_capture_request(self, request, response):
     prefix = request.filename_prefix.strip() or self.DEFAULT_PREFIX
@@ -56,7 +59,14 @@ class CaptureImageNode(Node):
     with self._image_lock:
       if self._latest_image is None:
         response.success = False
-        response.message = '尚未接收到任何图像帧'
+        response.message = 'CAMERA_NO_IMAGE'
+        response.saved_path = ''
+        self.get_logger().warn(response.message)
+        return response
+      stale_timeout = float(self.get_parameter('fault_recovery.image_stale_timeout_sec').value)
+      if stale_timeout > 0 and (time.monotonic() - self._last_frame_time) > stale_timeout:
+        response.success = False
+        response.message = 'CAMERA_STALE_IMAGE'
         response.saved_path = ''
         self.get_logger().warn(response.message)
         return response

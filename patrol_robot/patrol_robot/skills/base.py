@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, auto
 
 from rclpy.node import Node
@@ -17,6 +17,9 @@ class SkillStatus(Enum):
 class SkillResult:
   status: SkillStatus
   message: str = ''
+  fault_code: str = ''
+  recoverable: bool = True
+  details: dict[str, object] = field(default_factory=dict)
 
   @property
   def succeeded(self) -> bool:

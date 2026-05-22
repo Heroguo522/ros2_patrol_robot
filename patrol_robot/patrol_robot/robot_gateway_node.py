@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import rclpy
-from patrol_interfaces.msg import TaskReport
+from patrol_interfaces.msg import FaultEvent, TaskReport
 from rclpy.node import Node
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
@@ -11,6 +11,7 @@ from patrol_robot.gateway.command_handler import CommandHandler
 from patrol_robot.gateway.mqtt_transport import MqttTransport
 from patrol_robot.gateway.schema import (
   build_event,
+  build_fault_event,
   build_online,
   build_task_report_event,
   build_telemetry,
@@ -45,6 +46,8 @@ class RobotGatewayNode(Node):
     self._aggregator = TelemetryAggregator(self, self._tf_buffer)
     self.create_subscription(
       TaskReport, '/robot/task_report', self._task_report_callback, 10)
+    self.create_subscription(
+      FaultEvent, '/robot/fault_event', self._fault_event_callback, 10)
 
     self._mqtt: MqttTransport | None = None
     if self.get_parameter('enable_mqtt').value:
@@ -85,6 +88,29 @@ class RobotGatewayNode(Node):
       return
     self._mqtt.publish_event(
       build_task_report_event(self._robot_id, msg.payload_json))
+
+  def _fault_event_callback(self, msg: FaultEvent) -> None:
+    if not self._mqtt:
+      return
+    self._mqtt.publish_event(
+      build_fault_event(
+        robot_id=self._robot_id,
+        task_id=msg.task_id,
+        task_name=msg.task_name,
+        event_type=msg.event_type,
+        fault_code=msg.fault_code,
+        fault_category=msg.fault_category,
+        severity=msg.severity,
+        recovery_action=msg.recovery_action,
+        attempt=msg.attempt,
+        max_attempts=msg.max_attempts,
+        step_type=msg.step_type,
+        step_index=msg.step_index,
+        step_total=msg.step_total,
+        station=msg.station,
+        message=msg.message,
+        details_json=msg.details_json,
+      ))
 
   def _publish_telemetry(self) -> None:
     snap = self._aggregator.snapshot()

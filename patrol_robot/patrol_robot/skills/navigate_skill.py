@@ -16,15 +16,36 @@ class NavigateSkill(Skill):
     super().__init__(node, 'navigate')
     self._navigator = navigator
     self._tf_buffer = tf_buffer
+    if not node.has_parameter('fault_recovery.nav_timeout_sec'):
+      node.declare_parameter('fault_recovery.nav_timeout_sec', 120.0)
+    self._nav_timeout_sec = float(node.get_parameter('fault_recovery.nav_timeout_sec').value)
 
   def execute(self, target_pose: PoseStamped, **kwargs) -> SkillResult:
     logger = self._node.get_logger()
+    current_pose = self._get_current_pose()
+    if current_pose is None:
+      return SkillResult(
+        SkillStatus.FAILED,
+        '导航前 TF 不可用',
+        fault_code='TF_UNAVAILABLE',
+        details={'frame': 'map->base_link'},
+      )
     logger.info(
       f'开始导航: (x={target_pose.pose.position.x:.2f}, '
       f'y={target_pose.pose.position.y:.2f})')
     self._navigator.goToPose(target_pose)
+    start = time.monotonic()
 
     while not self._navigator.isTaskComplete():
+      elapsed = time.monotonic() - start
+      if elapsed > self._nav_timeout_sec:
+        self._navigator.cancelTask()
+        return SkillResult(
+          SkillStatus.FAILED,
+          f'导航超时({self._nav_timeout_sec:.1f}s)',
+          fault_code='NAV_TIMEOUT',
+          details={'timeout_sec': self._nav_timeout_sec},
+        )
       feedback = self._navigator.getFeedback()
       current_pose = self._get_current_pose()
       if feedback and current_pose:
@@ -44,11 +65,22 @@ class NavigateSkill(Skill):
       return SkillResult(SkillStatus.CANCELED, '导航被取消')
     if result == TaskResult.FAILED:
       logger.error('导航失败')
-      return SkillResult(SkillStatus.FAILED, '导航失败')
-    return SkillResult(SkillStatus.FAILED, '无效的导航结果')
+      return SkillResult(
+        SkillStatus.FAILED,
+        '导航失败',
+        fault_code='NAV_FAILED',
+        details={
+          'target_x': target_pose.pose.position.x,
+          'target_y': target_pose.pose.position.y,
+        },
+      )
+    return SkillResult(SkillStatus.FAILED, '无效的导航结果', fault_code='NAV_FAILED')
 
   def cancel(self) -> None:
     self._navigator.cancelTask()
+
+  def clear_costmaps(self) -> None:
+    self._navigator.clearAllCostmaps()
 
   def _get_current_pose(self) -> PoseStamped | None:
     try:
