@@ -18,6 +18,8 @@ from patrol_robot.orchestrator import (
   TaskLoader,
   TaskOrchestrator,
 )
+from patrol_robot.faults.fault_manager import FaultManager
+from patrol_robot.faults.recovery_policy import RecoveryPolicy
 from patrol_robot.skills.base import SkillResult, SkillStatus
 from patrol_robot.skills.capture_image_skill import CaptureImageSkill
 from patrol_robot.skills.detect_anomaly_skill import DetectAnomalySkill
@@ -28,26 +30,12 @@ from patrol_robot.utils.pose_utils import pose_from_xyyaw
 
 
 class PatrolTaskState(Enum):
-  BOOTSTRAP = auto()
   IDLE = auto()
   RUNNING = auto()
-  NAVIGATING = auto()
-  EXECUTING_STEP = auto()
-  RETRY_WAIT = auto()
   PAUSED = auto()
-  FINISHED = auto()
-
-
-IOT_STATE_MAP = {
-  PatrolTaskState.BOOTSTRAP: 'initializing',
-  PatrolTaskState.IDLE: 'idle',
-  PatrolTaskState.RUNNING: 'idle',
-  PatrolTaskState.NAVIGATING: 'navigating',
-  PatrolTaskState.EXECUTING_STEP: 'at_waypoint',
-  PatrolTaskState.RETRY_WAIT: 'retry_wait',
-  PatrolTaskState.PAUSED: 'paused',
-  PatrolTaskState.FINISHED: 'finished',
-}
+  RECOVERING = auto()
+  FAILED = auto()
+  COMPLETED = auto()
 
 
 class TaskManager:
@@ -60,6 +48,7 @@ class TaskManager:
     detect_skill: DetectAnomalySkill,
     report_skill: ReportSkill,
     status_publisher,
+    fault_event_publisher,
     robot_id: str = 'robot_001',
   ):
     self._node = node
@@ -69,16 +58,19 @@ class TaskManager:
     self._detect = detect_skill
     self._report = report_skill
     self._publish_status = status_publisher
+    self._publish_fault_event = fault_event_publisher
     self._robot_id = robot_id
     self._logger = node.get_logger()
     self._lock = threading.Lock()
 
-    self._node.declare_parameter('navigate_retry_wait_sec', 60.0)
     self._node.declare_parameter('task_config_dir', '')
     self._node.declare_parameter('auto_start_task', True)
     self._node.declare_parameter('default_task_name', 'legacy_room_patrol')
+    self._node.declare_parameter('task_completion_hold_sec', 5.0)
+    self._declare_recovery_parameters()
 
-    self._retry_wait_sec = self._node.get_parameter('navigate_retry_wait_sec').value
+    self._task_completion_hold_sec = float(
+      self._node.get_parameter('task_completion_hold_sec').value)
     self._auto_start = self._node.get_parameter('auto_start_task').value
 
     self._library: TaskLibrary | None = None
@@ -89,7 +81,7 @@ class TaskManager:
     self._step_total = 0
     self._current_step_type = ''
     self._current_station = ''
-    self._state = PatrolTaskState.BOOTSTRAP
+    self._state = PatrolTaskState.IDLE
     self._task_id = ''
     self._paused = False
     self._cancel_requested = False
@@ -98,26 +90,55 @@ class TaskManager:
     self._pending_start = False
     self._pending_task_name: str | None = None
     self._pending_task_id: str | None = None
+    self._recovery_policy = RecoveryPolicy.from_node(self._node)
+    self._fault_manager = FaultManager(
+      node=self._node,
+      robot_id=self._robot_id,
+      event_publisher=self._publish_fault_event,
+      recovery_policy=self._recovery_policy,
+      navigate_skill=self._navigate,
+      set_state_callback=self._set_state_by_name,
+      set_fault_code_callback=self._set_fault_code,
+    )
     self._orchestrator = TaskOrchestrator(
-      self._logger, status_callback=self._on_step_status)
-
-  @property
-  def iot_state(self) -> str:
-    if self._fault_code:
-      return 'fault'
-    return IOT_STATE_MAP.get(self._state, 'idle')
+      self._logger,
+      status_callback=self._on_step_status,
+      fault_manager=self._fault_manager,
+    )
 
   def _set_state(self, state: PatrolTaskState) -> None:
     with self._lock:
       self._state = state
     self._emit_status()
 
+  def _set_state_by_name(self, state: str) -> None:
+    mapping = {
+      'idle': PatrolTaskState.IDLE,
+      'running': PatrolTaskState.RUNNING,
+      'paused': PatrolTaskState.PAUSED,
+      'recovering': PatrolTaskState.RECOVERING,
+      'failed': PatrolTaskState.FAILED,
+      'completed': PatrolTaskState.COMPLETED,
+    }
+    if state not in mapping:
+      self._logger.warn(f'忽略未知状态: {state}')
+      return
+    self._set_state(mapping[state])
+
+  def _set_fault_code(self, fault_code: str) -> None:
+    with self._lock:
+      self._fault_code = fault_code
+    self._emit_status()
+
+  def _state_text(self) -> str:
+    return self._state.name.lower()
+
   def _emit_status(self) -> None:
     with self._lock:
       msg = RobotStatus()
       msg.robot_id = self._robot_id
       msg.task_id = self._task_id
-      msg.state = self.iot_state
+      msg.state = self._state_text()
       msg.waypoint_index = self._point_index
       msg.waypoint_total = self._step_total
       msg.step_index = self._step_index
@@ -138,6 +159,25 @@ class TaskManager:
     except Exception:
       source_fallback = Path(__file__).resolve().parents[1] / 'config'
       return str(source_fallback)
+
+  def _declare_recovery_parameters(self) -> None:
+    defaults = {
+      'fault_recovery.nav_retry_max_attempts': 3,
+      'fault_recovery.nav_retry_initial_wait_sec': 3.0,
+      'fault_recovery.nav_retry_backoff_factor': 2.0,
+      'fault_recovery.nav_timeout_sec': 120.0,
+      'fault_recovery.nav_clear_costmap_on_retry': True,
+      'fault_recovery.service_wait_timeout_sec': 2.0,
+      'fault_recovery.capture_retry_max_attempts': 1,
+      'fault_recovery.capture_retry_wait_sec': 2.0,
+      'fault_recovery.capture_failure_blocks_task_default': False,
+      'fault_recovery.camera_no_image_blocks_task_default': False,
+      'fault_recovery.image_stale_timeout_sec': 5.0,
+      'fault_recovery.tts_failure_blocks_task': False,
+    }
+    for key, value in defaults.items():
+      if not self._node.has_parameter(key):
+        self._node.declare_parameter(key, value)
 
   def _load_library(self) -> TaskLibrary:
     loader = TaskLoader(self._logger)
@@ -174,11 +214,9 @@ class TaskManager:
     self._step_total = ctx.step_total
     self._current_step_type = ctx.current_step_type
     self._current_station = ctx.current_station or ''
-    if ctx.current_step_type == 'navigate':
-      self._set_state(PatrolTaskState.NAVIGATING)
-      self._point_index = min(ctx.step_index, max(ctx.step_total - 1, 0))
-    else:
-      self._set_state(PatrolTaskState.EXECUTING_STEP)
+    self._point_index = min(ctx.step_index, max(ctx.step_total - 1, 0))
+    if self._state not in (PatrolTaskState.PAUSED, PatrolTaskState.RECOVERING):
+      self._set_state(PatrolTaskState.RUNNING)
 
   def _run_navigate_step(self, step, ctx: ExecutionContext) -> SkillResult:
     if self._registry is None:
@@ -195,14 +233,7 @@ class TaskManager:
       math.radians(station.yaw_deg),
     )
     result = self._navigate.execute(target_pose=target_pose)
-    if result.status == SkillStatus.SUCCEEDED:
-      return result
-    self._fault_code = 'NAV_FAILED'
-    self._set_state(PatrolTaskState.RETRY_WAIT)
-    self._logger.warn(
-      f'导航失败, {self._retry_wait_sec:.0f}s 后重试步骤: {target}')
-    time.sleep(self._retry_wait_sec)
-    return self._navigate.execute(target_pose=target_pose)
+    return result
 
   def _run_speak_step(self, step, ctx: ExecutionContext) -> SkillResult:
     text = str(step.params.get('text', '')).strip()
@@ -234,10 +265,7 @@ class TaskManager:
 
   def _run_detect_step(self, step, ctx: ExecutionContext) -> SkillResult:
     model = str(step.params.get('model', 'mock_detector')).strip()
-    result = self._detect.execute(model=model, context=ctx)
-    if not result.succeeded:
-      self._fault_code = 'NO_IMAGE'
-    return result
+    return self._detect.execute(model=model, context=ctx)
 
   def _run_report_step(self, step, ctx: ExecutionContext) -> SkillResult:
     channel = str(step.params.get('channel', 'log')).strip()
@@ -296,6 +324,7 @@ class TaskManager:
       self._pending_task_id = None
       self._cancel_requested = False
       self._paused = False
+      self._patrol_active = True
       self._fault_code = ''
       self._orchestrator.reset()
     self._set_state(PatrolTaskState.RUNNING)
@@ -321,14 +350,17 @@ class TaskManager:
         ok, message = self._orchestrator.run_task(task, self._registry, ctx)
         if ok:
           self._fault_code = ''
-          self._set_state(PatrolTaskState.FINISHED)
+          self._set_state(PatrolTaskState.COMPLETED)
+          time.sleep(max(self._task_completion_hold_sec, 0.0))
+          self._set_state(PatrolTaskState.IDLE)
           self._logger.info(f'任务完成: {task_name}')
         else:
           if '任务已取消' in message:
             self._set_state(PatrolTaskState.IDLE)
           else:
             self._fault_code = self._fault_code or 'TASK_FAILED'
-            self._set_state(PatrolTaskState.RETRY_WAIT)
+            if self._state != PatrolTaskState.FAILED:
+              self._set_state(PatrolTaskState.FAILED)
           self._logger.warn(message)
         with self._lock:
           self._patrol_active = False
@@ -345,7 +377,6 @@ class TaskManager:
       time.sleep(0.1)
 
   def run(self) -> None:
-    self._set_state(PatrolTaskState.BOOTSTRAP)
     self._library = self._load_library()
     self._registry = self._build_registry(self._library)
     self._init_robot_pose()

@@ -7,20 +7,24 @@ from patrol_robot.skills.base import Skill, SkillResult, SkillStatus
 
 class SpeakSkill(Skill):
   SERVICE_NAME = 'play_audio_service'
-  DEFAULT_TIMEOUT_SEC = 10.0
+  DEFAULT_TIMEOUT_SEC = 2.0
 
   def __init__(self, node: Node, timeout_sec: float = DEFAULT_TIMEOUT_SEC):
     super().__init__(node, 'speak')
-    self._timeout_sec = timeout_sec
+    if not node.has_parameter('fault_recovery.service_wait_timeout_sec'):
+      node.declare_parameter('fault_recovery.service_wait_timeout_sec', timeout_sec)
+    self._timeout_sec = float(node.get_parameter('fault_recovery.service_wait_timeout_sec').value)
     self._client = node.create_client(PlayAudio, self.SERVICE_NAME)
-    while not self._client.wait_for_service(timeout_sec=1.0):
-      node.get_logger().info(f'等待语音服务 [{self.SERVICE_NAME}]...')
-    node.get_logger().info(f'已连接语音服务 [{self.SERVICE_NAME}]')
 
   def execute(self, text: str = '', **kwargs) -> SkillResult:
     logger = self._node.get_logger()
-    if not self._client.service_is_ready():
-      return SkillResult(SkillStatus.FAILED, '语音服务不可用')
+    if not self._client.wait_for_service(timeout_sec=self._timeout_sec):
+      return SkillResult(
+        SkillStatus.FAILED,
+        '语音服务不可用',
+        fault_code='TTS_SERVICE_UNAVAILABLE',
+        details={'service': self.SERVICE_NAME, 'wait_timeout_sec': self._timeout_sec},
+      )
 
     logger.info(f"请求播放语音: '{text}'")
     request = PlayAudio.Request()
@@ -31,7 +35,12 @@ class SpeakSkill(Skill):
 
     if not future.done():
       logger.error('调用语音服务超时')
-      return SkillResult(SkillStatus.FAILED, '语音服务超时')
+      return SkillResult(
+        SkillStatus.FAILED,
+        '语音服务超时',
+        fault_code='TTS_TIMEOUT',
+        details={'timeout_sec': self._timeout_sec},
+      )
 
     try:
       response = future.result()
@@ -39,7 +48,16 @@ class SpeakSkill(Skill):
         logger.info(f'语音: {response.message}')
         return SkillResult(SkillStatus.SUCCEEDED, response.message)
       logger.warn(f'语音播放失败: {response.message}')
-      return SkillResult(SkillStatus.FAILED, response.message)
+      return SkillResult(
+        SkillStatus.FAILED,
+        response.message,
+        fault_code='TTS_FAILED',
+      )
     except Exception as e:
       logger.error(f'调用语音服务异常: {e}')
-      return SkillResult(SkillStatus.FAILED, str(e))
+      return SkillResult(
+        SkillStatus.FAILED,
+        str(e),
+        fault_code='TTS_FAILED',
+        details={'exception': str(e)},
+      )

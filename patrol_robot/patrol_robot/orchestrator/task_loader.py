@@ -76,10 +76,17 @@ class TaskLoader:
             f'{file_path} step[{idx}] 不支持 type={step_type}')
         params = {
           k: v for k, v in step_raw.items()
-          if k not in ('type', 'optional')
+          if k not in ('type', 'optional', 'required')
         }
         optional = bool(step_raw.get('optional', False))
-        steps.append(StepDef(type=step_type, params=params, optional=optional))
+        required = bool(step_raw.get('required', False))
+        steps.append(
+          StepDef(
+            type=step_type,
+            params=params,
+            optional=optional,
+            required=required,
+          ))
 
       task_id = str(raw.get('task_id', name)).strip() or name
       on_failure = str(raw.get('on_failure', 'retry_step')).strip()

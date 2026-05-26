@@ -1,15 +1,17 @@
 import time
 
+from patrol_robot.faults.fault_types import RecoveryOutcome
 from patrol_robot.orchestrator.execution_context import ExecutionContext
 from patrol_robot.orchestrator.skill_registry import SkillRegistry
-from patrol_robot.orchestrator.task_definition import TaskDef
+from patrol_robot.orchestrator.task_definition import StepDef, TaskDef
 from patrol_robot.skills.base import SkillResult, SkillStatus
 
 
 class TaskOrchestrator:
-  def __init__(self, logger, status_callback):
+  def __init__(self, logger, status_callback, fault_manager=None):
     self._logger = logger
     self._status_callback = status_callback
+    self._fault_manager = fault_manager
     self._paused = False
     self._cancelled = False
 
@@ -50,7 +52,13 @@ class TaskOrchestrator:
           self._logger.warn(
             f'可选步骤 {step.type} 异常已忽略: {e}')
           continue
-        return self._handle_failure(task, step.type, str(e))
+        result = SkillResult(
+          SkillStatus.FAILED,
+          str(e),
+          fault_code='STEP_EXCEPTION',
+          details={'exception': str(e)},
+        )
+        return self._handle_failure(task, step, ctx, result, registry)
 
       if result.status == SkillStatus.CANCELED:
         return False, result.message or '任务已取消'
@@ -60,19 +68,38 @@ class TaskOrchestrator:
           self._logger.warn(
             f'可选步骤 {step.type} 失败已忽略: {result.message}')
           continue
-        return self._handle_failure(task, step.type, result.message)
+        return self._handle_failure(task, step, ctx, result, registry)
     return True, '任务执行完成'
 
   def _handle_failure(
     self,
     task: TaskDef,
-    step_type: str,
-    reason: str,
+    step: StepDef,
+    ctx: ExecutionContext,
+    result: SkillResult,
+    registry: SkillRegistry,
   ) -> tuple[bool, str]:
+    step_type = step.type
+    reason = result.message
     mode = task.on_failure or 'retry_step'
     self._logger.warn(f'步骤 {step_type} 失败: {reason}, 策略: {mode}')
-    if mode == 'skip_step' and step_type != 'navigate':
+    if self._fault_manager is None:
+      if mode == 'skip_step' and step_type != 'navigate':
+        return True, 'skip_step'
+      if mode == 'abort_task':
+        return False, f'{step_type} 失败，中止任务: {reason}'
+      return False, f'{step_type} 失败: {reason}'
+
+    recovery = self._fault_manager.handle_skill_failure(
+      ctx=ctx,
+      step=step,
+      result=result,
+      retry_callback=lambda: registry.execute(step, ctx),
+    )
+    if recovery.outcome == RecoveryOutcome.ABORT_TASK:
+      return False, f'{step_type} 失败，中止任务: {recovery.message}'
+    if recovery.outcome == RecoveryOutcome.SKIP_STEP:
       return True, 'skip_step'
     if mode == 'abort_task':
       return False, f'{step_type} 失败，中止任务: {reason}'
-    return False, f'{step_type} 失败: {reason}'
+    return True, recovery.message

@@ -105,3 +105,48 @@ def build_task_report_event(robot_id: str, payload_json: str) -> str:
     'timestamp': utc_now_iso(),
   }
   return dumps_compact(payload)
+
+
+def build_fault_event(
+  robot_id: str,
+  task_id: str,
+  task_name: str,
+  event_type: str,
+  fault_code: str,
+  fault_category: str,
+  severity: str,
+  recovery_action: str,
+  attempt: int,
+  max_attempts: int,
+  step_type: str,
+  step_index: int,
+  step_total: int,
+  station: str,
+  message: str,
+  details_json: str,
+) -> str:
+  try:
+    details = json.loads(details_json) if details_json else {}
+  except json.JSONDecodeError:
+    details = {'raw': details_json}
+  payload = {
+    'robot_id': robot_id,
+    'task_id': task_id,
+    'task_name': task_name,
+    'event_type': event_type,
+    'fault_code': fault_code,
+    'fault_category': fault_category,
+    'severity': severity,
+    'recovery_action': recovery_action,
+    'attempt': int(attempt),
+    'max_attempts': int(max_attempts),
+    'step_type': step_type,
+    'step_index': int(step_index),
+    'step_total': int(step_total),
+    'station': station,
+    'message': message,
+    'details': details,
+    'timestamp': utc_now_iso(),
+    'source': 'edge',
+  }
+  return dumps_compact(payload)
