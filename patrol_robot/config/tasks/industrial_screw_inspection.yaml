@@ -1,0 +1,32 @@
+name: industrial_screw_inspection
+task_id: industrial_screw_demo
+description: 工业复合任务：移动巡检、工件识别、mock 打螺丝与工位结果上报
+on_failure: retry_step
+
+station_groups:
+  screw_workstations:
+    stations: [station_1, station_2]
+    station_label_template: "{index}号工位"
+    speak_template: "到达{station_label}，开始工件检测和打螺丝模拟"
+    save_tag_template: "{station}_workpiece"
+    model: mock_workpiece_detector
+    expected_state: ready_for_screw
+    screw_count: 4
+    torque_nm: 1.2
+    timeout_sec: 15.0
+    report_channel: mqtt
+
+steps:
+  - type: station_group
+    group: screw_workstations
+
+  - type: navigate
+    target: home
+
+  - type: speak
+    text: "工业复合任务执行完成"
+    optional: true
+
+  - type: report
+    channel: mqtt
+    summary: true

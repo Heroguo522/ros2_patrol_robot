@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import rclpy
-from patrol_interfaces.msg import FaultEvent, TaskReport
+from patrol_interfaces.msg import CompositeTaskReport, FaultEvent, TaskReport
 from rclpy.node import Node
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
@@ -10,6 +10,7 @@ from tf2_ros.transform_listener import TransformListener
 from patrol_robot.gateway.command_handler import CommandHandler
 from patrol_robot.gateway.mqtt_transport import MqttTransport
 from patrol_robot.gateway.schema import (
+  build_composite_task_report_event,
   build_event,
   build_fault_event,
   build_online,
@@ -46,6 +47,11 @@ class RobotGatewayNode(Node):
     self._aggregator = TelemetryAggregator(self, self._tf_buffer)
     self.create_subscription(
       TaskReport, '/robot/task_report', self._task_report_callback, 10)
+    self.create_subscription(
+      CompositeTaskReport,
+      '/robot/composite_task_report',
+      self._composite_task_report_callback,
+      10)
     self.create_subscription(
       FaultEvent, '/robot/fault_event', self._fault_event_callback, 10)
 
@@ -88,6 +94,12 @@ class RobotGatewayNode(Node):
       return
     self._mqtt.publish_event(
       build_task_report_event(self._robot_id, msg.payload_json))
+
+  def _composite_task_report_callback(self, msg: CompositeTaskReport) -> None:
+    if not self._mqtt:
+      return
+    self._mqtt.publish_event(
+      build_composite_task_report_event(self._robot_id, msg.payload_json))
 
   def _fault_event_callback(self, msg: FaultEvent) -> None:
     if not self._mqtt:

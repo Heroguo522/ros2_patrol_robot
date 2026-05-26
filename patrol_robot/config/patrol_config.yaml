@@ -30,3 +30,14 @@ patrol_node:
       image_stale_timeout_sec: 5.0
 
       tts_failure_blocks_task: false
+
+    composite_task:
+      mock_workpiece_default_state: "ready_for_screw"
+      mock_workpiece_station_overrides_json: ""
+      mock_arm_motion_delay_sec: 0.5
+      mock_arm_fail_station: ""
+      mock_arm_fail_screw_index: -1
+      mock_tool_delay_sec: 0.5
+      mock_tool_torque_noise_nm: 0.05
+      mock_tool_fail_station: ""
+      mock_tool_fail_screw_index: -1

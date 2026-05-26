@@ -64,6 +64,8 @@ class FaultManager:
         0,
         result.message or '降级继续执行',
       )
+      self._set_fault_code('')
+      self._set_state('running')
       return RecoveryResult(
         outcome=RecoveryOutcome.CONTINUE,
         attempt=0,
@@ -79,6 +81,8 @@ class FaultManager:
         0,
         result.message or '跳过当前步骤',
       )
+      self._set_fault_code('')
+      self._set_state('running')
       return RecoveryResult(
         outcome=RecoveryOutcome.SKIP_STEP,
         attempt=0,
