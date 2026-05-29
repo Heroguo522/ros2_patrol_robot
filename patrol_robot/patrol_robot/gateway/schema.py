@@ -107,6 +107,20 @@ def build_task_report_event(robot_id: str, payload_json: str) -> str:
   return dumps_compact(payload)
 
 
+def build_composite_task_report_event(robot_id: str, payload_json: str) -> str:
+  try:
+    payload = json.loads(payload_json) if payload_json else {}
+  except json.JSONDecodeError:
+    payload = {'payload_json': payload_json}
+  if not isinstance(payload, dict):
+    payload = {'payload': payload}
+  payload['robot_id'] = robot_id
+  payload['event_type'] = 'composite_task_report'
+  payload['timestamp'] = utc_now_iso()
+  payload['source'] = 'edge'
+  return dumps_compact(payload)
+
+
 def build_fault_event(
   robot_id: str,
   task_id: str,

@@ -11,10 +11,14 @@ from rclpy.executors import MultiThreadedExecutor
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 
+from patrol_robot.adapters.mock_arm_adapter import MockArmAdapter
+from patrol_robot.adapters.mock_tool_adapter import MockScrewToolAdapter
 from patrol_robot.skills.capture_image_skill import CaptureImageSkill
 from patrol_robot.skills.detect_anomaly_skill import DetectAnomalySkill
+from patrol_robot.skills.detect_workpiece_skill import WorkpieceDetectSkill
 from patrol_robot.skills.navigate_skill import NavigateSkill
 from patrol_robot.skills.report_skill import ReportSkill
+from patrol_robot.skills.screw_driving_skill import ScrewDrivingSkill
 from patrol_robot.skills.speak_skill import SpeakSkill
 from patrol_robot.task_manager import TaskManager
 
@@ -34,14 +38,44 @@ class PatrolNode(BasicNavigator):
     self.declare_parameter('initial_pose.x', 0.0)
     self.declare_parameter('initial_pose.y', 0.0)
     self.declare_parameter('initial_pose.yaw', 0.0)
+    self._declare_composite_task_parameters()
 
     self._status_pub = self.create_publisher(RobotStatus, '/robot/status', 10)
     self._fault_event_pub = self.create_publisher(FaultEvent, '/robot/fault_event', 10)
+
+    mock_arm = MockArmAdapter(
+      self.get_logger(),
+      motion_delay_sec=self.get_parameter(
+        'composite_task.mock_arm_motion_delay_sec').value,
+      fail_station=self.get_parameter(
+        'composite_task.mock_arm_fail_station').value,
+      fail_screw_index=self.get_parameter(
+        'composite_task.mock_arm_fail_screw_index').value,
+    )
+    mock_tool = MockScrewToolAdapter(
+      self.get_logger(),
+      tool_delay_sec=self.get_parameter(
+        'composite_task.mock_tool_delay_sec').value,
+      torque_noise_nm=self.get_parameter(
+        'composite_task.mock_tool_torque_noise_nm').value,
+      fail_station=self.get_parameter(
+        'composite_task.mock_tool_fail_station').value,
+      fail_screw_index=self.get_parameter(
+        'composite_task.mock_tool_fail_screw_index').value,
+    )
 
     navigate_skill = NavigateSkill(self, self, self.tf_buffer)
     speak_skill = SpeakSkill(self)
     capture_skill = CaptureImageSkill(self)
     detect_skill = DetectAnomalySkill(self)
+    workpiece_skill = WorkpieceDetectSkill(
+      self,
+      default_state=self.get_parameter(
+        'composite_task.mock_workpiece_default_state').value,
+      station_overrides_json=self.get_parameter(
+        'composite_task.mock_workpiece_station_overrides_json').value,
+    )
+    screw_skill = ScrewDrivingSkill(self, mock_arm, mock_tool)
     report_skill = ReportSkill(self)
     self.task_manager = TaskManager(
       self,
@@ -49,6 +83,8 @@ class PatrolNode(BasicNavigator):
       speak_skill,
       capture_skill,
       detect_skill,
+      workpiece_skill,
+      screw_skill,
       report_skill,
       status_publisher=self._publish_robot_status,
       fault_event_publisher=self._publish_fault_event,
@@ -61,6 +97,22 @@ class PatrolNode(BasicNavigator):
       ControlPatrol, 'control_patrol', self._handle_control_patrol)
 
     self.get_logger().info('巡逻节点已初始化 (TaskManager + 远程任务服务)')
+
+  def _declare_composite_task_parameters(self) -> None:
+    defaults = {
+      'composite_task.mock_workpiece_default_state': 'ready_for_screw',
+      'composite_task.mock_workpiece_station_overrides_json': '',
+      'composite_task.mock_arm_motion_delay_sec': 0.5,
+      'composite_task.mock_arm_fail_station': '',
+      'composite_task.mock_arm_fail_screw_index': -1,
+      'composite_task.mock_tool_delay_sec': 0.5,
+      'composite_task.mock_tool_torque_noise_nm': 0.05,
+      'composite_task.mock_tool_fail_station': '',
+      'composite_task.mock_tool_fail_screw_index': -1,
+    }
+    for name, value in defaults.items():
+      if not self.has_parameter(name):
+        self.declare_parameter(name, value)
 
   def _publish_robot_status(self, msg: RobotStatus) -> None:
     self._status_pub.publish(msg)

@@ -1,0 +1,9 @@
+string task_id
+string task_name
+string station
+string station_result
+string image_path
+string workpiece_json
+string screw_result_json
+string payload_json
+builtin_interfaces/Time stamp

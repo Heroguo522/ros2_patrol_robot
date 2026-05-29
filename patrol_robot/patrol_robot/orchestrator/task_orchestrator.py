@@ -58,7 +58,10 @@ class TaskOrchestrator:
           fault_code='STEP_EXCEPTION',
           details={'exception': str(e)},
         )
-        return self._handle_failure(task, step, ctx, result, registry)
+        ok, message = self._handle_failure(task, step, ctx, result, registry)
+        if ok:
+          continue
+        return False, message
 
       if result.status == SkillStatus.CANCELED:
         return False, result.message or '任务已取消'
@@ -68,7 +71,10 @@ class TaskOrchestrator:
           self._logger.warn(
             f'可选步骤 {step.type} 失败已忽略: {result.message}')
           continue
-        return self._handle_failure(task, step, ctx, result, registry)
+        ok, message = self._handle_failure(task, step, ctx, result, registry)
+        if ok:
+          continue
+        return False, message
     return True, '任务执行完成'
 
   def _handle_failure(

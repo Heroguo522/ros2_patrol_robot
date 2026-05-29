@@ -23,8 +23,10 @@ from patrol_robot.faults.recovery_policy import RecoveryPolicy
 from patrol_robot.skills.base import SkillResult, SkillStatus
 from patrol_robot.skills.capture_image_skill import CaptureImageSkill
 from patrol_robot.skills.detect_anomaly_skill import DetectAnomalySkill
+from patrol_robot.skills.detect_workpiece_skill import WorkpieceDetectSkill
 from patrol_robot.skills.navigate_skill import NavigateSkill
 from patrol_robot.skills.report_skill import ReportSkill
+from patrol_robot.skills.screw_driving_skill import ScrewDrivingSkill
 from patrol_robot.skills.speak_skill import SpeakSkill
 from patrol_robot.utils.pose_utils import pose_from_xyyaw
 
@@ -46,6 +48,8 @@ class TaskManager:
     speak_skill: SpeakSkill,
     capture_skill: CaptureImageSkill,
     detect_skill: DetectAnomalySkill,
+    workpiece_skill: WorkpieceDetectSkill,
+    screw_skill: ScrewDrivingSkill,
     report_skill: ReportSkill,
     status_publisher,
     fault_event_publisher,
@@ -56,6 +60,8 @@ class TaskManager:
     self._speak = speak_skill
     self._capture = capture_skill
     self._detect = detect_skill
+    self._workpiece = workpiece_skill
+    self._screw = screw_skill
     self._report = report_skill
     self._publish_status = status_publisher
     self._publish_fault_event = fault_event_publisher
@@ -193,6 +199,8 @@ class TaskManager:
     registry.register('capture_image', self._run_capture_step)
     registry.register('wait', self._run_wait_step)
     registry.register('detect_anomaly', self._run_detect_step)
+    registry.register('detect_workpiece', self._run_detect_workpiece_step)
+    registry.register('screw_drive', self._run_screw_drive_step)
     registry.register('report', self._run_report_step)
     return registry
 
@@ -243,6 +251,7 @@ class TaskManager:
 
   def _run_capture_step(self, step, ctx: ExecutionContext) -> SkillResult:
     save_tag = str(step.params.get('save_tag', 'patrol_image')).strip()
+    ctx.last_image_path = None
     result = self._capture.execute(filename_prefix=save_tag or 'patrol_image')
     if result.succeeded:
       ctx.last_image_path = result.message
@@ -267,9 +276,42 @@ class TaskManager:
     model = str(step.params.get('model', 'mock_detector')).strip()
     return self._detect.execute(model=model, context=ctx)
 
+  def _run_detect_workpiece_step(self, step, ctx: ExecutionContext) -> SkillResult:
+    model = str(step.params.get('model', 'mock_workpiece_detector')).strip()
+    expected_state = str(
+      step.params.get('expected_state', 'ready_for_screw')).strip()
+    mock_state = str(step.params.get('mock_state', '')).strip()
+    return self._workpiece.execute(
+      model=model,
+      expected_state=expected_state or 'ready_for_screw',
+      mock_state=mock_state,
+      context=ctx,
+    )
+
+  def _run_screw_drive_step(self, step, ctx: ExecutionContext) -> SkillResult:
+    target = str(step.params.get('target', ctx.current_station or '')).strip()
+    try:
+      screw_count = int(step.params.get('screw_count', 4))
+      torque_nm = float(step.params.get('torque_nm', 1.2))
+      timeout_sec = float(step.params.get('timeout_sec', 15.0))
+    except (TypeError, ValueError):
+      return SkillResult(
+        SkillStatus.FAILED,
+        'screw_drive 参数非法',
+        fault_code='STEP_EXCEPTION',
+      )
+    return self._screw.execute(
+      target=target,
+      screw_count=screw_count,
+      torque_nm=torque_nm,
+      timeout_sec=timeout_sec,
+      context=ctx,
+    )
+
   def _run_report_step(self, step, ctx: ExecutionContext) -> SkillResult:
     channel = str(step.params.get('channel', 'log')).strip()
-    return self._report.execute(channel=channel, context=ctx)
+    summary = bool(step.params.get('summary', False))
+    return self._report.execute(channel=channel, context=ctx, summary=summary)
 
   def submit_task(
     self,
@@ -308,6 +350,7 @@ class TaskManager:
         self._patrol_active = False
         self._orchestrator.cancel()
       self._navigate.cancel()
+      self._screw.cancel()
       self._fault_code = ''
       self._set_state(PatrolTaskState.IDLE)
       return True, '巡逻已取消'
