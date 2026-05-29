@@ -3,7 +3,7 @@ patrol_node:
     robot_id: "robot_001"
     task_config_dir: ""
     auto_start_task: true
-    default_task_name: "legacy_room_patrol"
+    default_task_name: "industrial_screw_inspection"
 
     # 机器人初始位姿 (x, y, yaw in radians)
     initial_pose:

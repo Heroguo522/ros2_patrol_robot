@@ -56,9 +56,9 @@ class TaskLoader:
   def _load_tasks(self, task_dir: Path) -> dict[str, TaskDef]:
     if not task_dir.exists():
       raise ValueError(f'任务目录不存在: {task_dir}')
-    task_files = sorted(task_dir.glob('*.yaml'))
+    task_files = self._collect_task_files(task_dir)
     if not task_files:
-      raise ValueError(f'任务目录为空: {task_dir}')
+      raise ValueError(f'任务目录为空或仅有无效 YAML: {task_dir}')
 
     tasks: dict[str, TaskDef] = {}
     for file_path in task_files:
@@ -208,6 +208,19 @@ class TaskLoader:
       },
     ])
     return steps
+
+  def _collect_task_files(self, task_dir: Path) -> list[Path]:
+    """收集可读任务 YAML，跳过断链符号链接等无效项。"""
+    valid: list[Path] = []
+    for file_path in sorted(task_dir.glob('*.yaml')):
+      if not file_path.exists():
+        self._logger.warn(f'跳过无效任务文件（不存在或断链）: {file_path}')
+        continue
+      if not file_path.is_file():
+        self._logger.warn(f'跳过非文件任务项: {file_path}')
+        continue
+      valid.append(file_path)
+    return valid
 
   def _load_yaml(self, path: Path) -> dict:
     if not path.exists():
